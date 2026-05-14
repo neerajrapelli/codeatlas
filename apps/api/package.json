@@ -1,0 +1,13 @@
+﻿{
+  "name": "@codeatlas/api",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "go build -o bin/server ./cmd/server && go build -o bin/indexer ./cmd/indexer",
+    "dev": "go run ./cmd/server",
+    "index": "go run ./cmd/indexer",
+    "lint": "go vet ./...",
+    "typecheck": "go vet ./...",
+    "clean": "go clean -cache"
+  }
+}

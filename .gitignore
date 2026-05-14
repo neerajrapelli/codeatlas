@@ -1,0 +1,69 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Turbo / caches
+.turbo/
+.cache/
+
+# Environment (never commit secrets)
+.env
+.env.local
+.env.*.local
+!.env.example
+apps/*/.env
+apps/*/.env.local
+!apps/*/.env.example
+
+# Logs & diagnostics
+*.log
+npm-debug.log*
+pnpm-debug.log*
+logs/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Test / coverage
+coverage/
+*.cover
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist-packages/
+
+# Go
+vendor/
+
+# API ingestion workspaces (cloned repos; local only)
+apps/api/workspace/
+
+# Misc
+*.tsbuildinfo
+tmp-upload.zip

@@ -1,0 +1,9 @@
+pnpm-lock.yaml
+dist
+build
+bin
+.turbo
+node_modules
+coverage
+*.min.js
+go.sum
