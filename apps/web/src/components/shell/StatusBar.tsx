@@ -11,9 +11,8 @@ export function StatusBar({ onClick }: { onClick: () => void }) {
 
   const repo = repositories.find((r) => r.id === activeRepoId);
   const indexing = repo && repo.status !== 'ready' && repo.status !== 'failed';
-  const pct = Math.round(
-    ingestionStatus?.codeIndex.progressPercent ?? repo?.progressPercent ?? 0,
-  );
+  const rawPct = ingestionStatus?.codeIndex.progressPercent ?? repo?.progressPercent ?? 0;
+  const pct = repo?.status === 'ready' ? 100 : Math.round(rawPct);
   const files = indexing ? null : (ingestionStatus?.codeIndex.filesIndexed ?? repo?.filesIndexed);
   const edges = indexing ? null : repo?.edgesIndexed;
   const fileCount = clusterLayer?.files.length;
@@ -35,6 +34,9 @@ export function StatusBar({ onClick }: { onClick: () => void }) {
           ? 'running'
           : 'queued';
 
+  const apiDotStatus =
+    apiStatus === 'online' ? 'ready' : apiStatus === 'offline' ? 'failed' : 'running';
+
   const apiLabel =
     apiStatus === 'online'
       ? 'API online'
@@ -44,28 +46,35 @@ export function StatusBar({ onClick }: { onClick: () => void }) {
           ? 'API…'
           : 'API offline';
 
+  const repoLabel =
+    repo?.status === 'ready'
+      ? `Ready — ${files != null ? String(files) : '—'} files · ${edges != null ? String(edges) : '—'} edges`
+      : indexing
+        ? `Indexing (${String(pct)}%)`
+        : repo
+          ? repo.status.replaceAll('_', ' ')
+          : 'No repo';
+
   return (
     <footer className="status-bar" onClick={onClick} role="status">
       <div className="status-bar__left">
-        <span className="status-bar__item">
-          <StatusDot status={apiStatus === 'online' ? 'ready' : apiStatus === 'offline' ? 'failed' : 'running'} />
-          {apiLabel}
+        <span className="status-bar__item" title={apiLabel}>
+          <StatusDot status={apiDotStatus} />
+          <span className="status-bar__text">{apiLabel}</span>
         </span>
-        <span className="status-bar__item">
+        <span className="status-bar__item" title={repo ? `${repo.name} — ${repoLabel}` : repoLabel}>
           <StatusDot status={statusKind} />
-          {repo?.status === 'ready'
-            ? `Ready — ${files != null ? String(files) : '—'} files · ${edges != null ? String(edges) : '—'} edges`
-            : indexing
-              ? `Indexing (${String(pct)}%)`
-              : repo
-                ? repo.status
-                : 'No repo'}
+          <span className="status-bar__text">{repoLabel}</span>
         </span>
-        <span className="status-bar__item">⚠ {String(hotspots.length)} hotspots</span>
-        <span className="status-bar__item">⬡ {nodeLabel}</span>
+        <span className="status-bar__item" title={`${String(hotspots.length)} hotspots`}>
+          <span className="status-bar__text">⚠ {String(hotspots.length)} hotspots</span>
+        </span>
+        <span className="status-bar__item" title={nodeLabel}>
+          <span className="status-bar__text">⬡ {nodeLabel}</span>
+        </span>
       </div>
       <div className="status-bar__right">
-        <span>⌘K commands · ⌘P files · ⌘⇧P palette</span>
+        <span className="status-bar__hints">⌘K commands · ⌘P files · ⌘⇧P palette</span>
       </div>
     </footer>
   );

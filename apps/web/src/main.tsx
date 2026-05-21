@@ -1,10 +1,10 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import 'reactflow/dist/style.css';
 import '@vscode/codicons/dist/codicon.css';
 
 import { App } from './App';
 import { getStoredTheme, initTheme } from './lib/theme';
+import { QueryProvider } from './providers/QueryProvider';
 import { useStore } from './store';
 import './styles/themes.css';
 import './styles/vscode.css';
@@ -19,6 +19,8 @@ if (!rootEl) {
 
 createRoot(rootEl).render(
   <StrictMode>
-    <App />
+    <QueryProvider>
+      <App />
+    </QueryProvider>
   </StrictMode>,
 );

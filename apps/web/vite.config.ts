@@ -23,6 +23,9 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    worker: {
+      format: 'es',
+    },
     resolve: {
       alias: {
         'elkjs/lib/elk.bundled.js': elkBundled,

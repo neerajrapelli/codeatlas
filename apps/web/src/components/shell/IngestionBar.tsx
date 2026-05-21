@@ -9,63 +9,60 @@ const STEP_LABELS: Record<string, string> = {
   semantic_embeddings: 'Embed',
 };
 
+function stepClass(status: IngestionStep['status']): string {
+  if (status === 'complete') return 'ingestion-bar__step-icon ingestion-bar__step-icon--done';
+  if (status === 'running') return 'ingestion-bar__step-icon ingestion-bar__step-icon--active ingestion-bar__pulse';
+  if (status === 'failed') return 'ingestion-bar__step-icon ingestion-bar__step-icon--failed';
+  return 'ingestion-bar__step-icon ingestion-bar__step-icon--pending';
+}
+
 function StepIcon({ status }: { status: IngestionStep['status'] }) {
-  if (status === 'complete') return <span style={{ color: '#4ec9b0' }}>✓</span>;
-  if (status === 'running') {
-    return (
-      <span className="ingestion-bar__pulse" style={{ color: '#007acc' }}>
-        ●
-      </span>
-    );
-  }
-  if (status === 'failed') return <span style={{ color: '#f44747' }}>✗</span>;
-  return <span style={{ color: '#555555' }}>○</span>;
+  if (status === 'complete') return <span className={stepClass(status)}>✓</span>;
+  if (status === 'running') return <span className={stepClass(status)}>●</span>;
+  if (status === 'failed') return <span className={stepClass(status)}>✗</span>;
+  return <span className={stepClass(status)}>○</span>;
 }
 
 export function IngestionBar({
   progress,
   fading,
   repoName,
+  repoReady,
 }: {
   progress: IngestionProgress | null;
   fading?: boolean;
   repoName?: string;
+  /** When the repository row is already `ready`, hide the bar even if SSE lagged at 95%. */
+  repoReady?: boolean;
 }) {
+  if (repoReady) return null;
   if (!progress) return null;
   if (progress.status !== 'running' && progress.status !== 'queued') {
     if (!fading) return null;
   }
 
-  const pct = progress.progress.percent;
+  const pct =
+    progress.status === 'complete'
+      ? 100
+      : Math.min(100, Math.max(0, Math.round(progress.progress.percent)));
 
   return (
     <div
-      className={`ingestion-bar ingestion-bar--shell ${fading ? 'ingestion-bar--fade' : ''}`}
+      className={`ingestion-bar ingestion-bar--graph ${fading ? 'ingestion-bar--fade' : ''}`}
       role="status"
-      style={{
-        height: 36,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        padding: '0 12px',
-        background: '#1a1a1a',
-        borderBottom: '1px solid #2a2a2a',
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-        fontSize: 12,
-        flexShrink: 0,
-      }}
+      aria-live="polite"
     >
-      <span className="ingestion-bar__pulse" style={{ color: '#007acc' }}>
-        ●
-      </span>
-      <span>Indexing {repoName ?? 'repository'}</span>
-      {progress.steps.map((step) => (
-        <span key={step.name} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          <StepIcon status={step.status} />
-          {STEP_LABELS[step.name] ?? step.name}
-        </span>
-      ))}
-      <span style={{ marginLeft: 'auto' }}>{String(pct)}%</span>
+      <span className="ingestion-bar__lead ingestion-bar__pulse">●</span>
+      <span className="ingestion-bar__label">Indexing {repoName ?? 'repository'}</span>
+      <div className="ingestion-bar__steps">
+        {progress.steps.map((step) => (
+          <span key={step.name} className="ingestion-bar__step">
+            <StepIcon status={step.status} />
+            <span>{STEP_LABELS[step.name] ?? step.name}</span>
+          </span>
+        ))}
+      </div>
+      <span className="ingestion-bar__pct">{String(pct)}%</span>
     </div>
   );
 }

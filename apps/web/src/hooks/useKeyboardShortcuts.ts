@@ -17,11 +17,11 @@ export function useKeyboardShortcuts() {
       const key = e.key.toLowerCase();
       if (mod && key === 'k') {
         e.preventDefault();
-        openPalette('commands');
+        openPalette('unified');
       }
       if (mod && key === 'p' && e.shiftKey) {
         e.preventDefault();
-        openPalette('commands');
+        openPalette('unified');
       }
       if (mod && key === 'p' && !e.shiftKey) {
         e.preventDefault();

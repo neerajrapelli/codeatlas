@@ -1,11 +1,14 @@
+import { EmptyState } from '../ui/EmptyState';
+
 export function SignalsView() {
   return (
     <div className="sidebar-view">
       <h3 className="sidebar-section-title">SIGNALS</h3>
-      <p className="empty-state">
-        Engineering memory (Phase 2) is not wired to the API yet. Schema exists for architecture signals from PRs
-        and issues.
-      </p>
+      <EmptyState
+        icon="codicon-comment-discussion"
+        title="Signals coming soon"
+        description="Engineering memory from PRs and issues will surface here in a future release."
+      />
     </div>
   );
 }

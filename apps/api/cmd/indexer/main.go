@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"codeatlas/apps/api/internal/config"
 	"codeatlas/apps/api/internal/db"
@@ -33,7 +34,7 @@ func main() {
 	slog.SetDefault(logger)
 
 	ctx := context.Background()
-	pool, err := db.NewPool(ctx, cfg.DatabaseURL)
+	pool, err := db.NewPool(ctx, cfg.DatabaseURL, false)
 	if err != nil {
 		slog.Error("db_connect_failed", "error", err)
 		os.Exit(1)
@@ -46,17 +47,14 @@ func main() {
 	}
 
 	var embedder indexer.Embedder
-	if cfg.OpenAIAPIKey != "" {
-		client := llm.NewOpenAIClient(cfg.OpenAIAPIKey, cfg.OpenAIChatModel, cfg.OpenAIEmbeddingModel)
-		embedder = client
-	} else {
-		embedder = llm.NewLocalClient()
+	if strings.TrimSpace(cfg.OpenAIAPIKey) != "" {
+		embedder = llm.NewOpenAIClient(cfg.OpenAIAPIKey, cfg.OpenAIChatModel, cfg.OpenAIEmbeddingModel)
 	}
 
 	svc := indexer.New(
 		indexer.NewMultiLanguageScanner(),
 		indexer.NewTreeSitterParser(),
-		indexer.NewPostgresStore(pool, embedder),
+		indexer.NewPostgresStore(pool, embedder, cfg.EmbeddingMaxPerRepo),
 		logger,
 	)
 	result, err := svc.Run(ctx, indexer.Request{RepositoryPath: *repoPath, RepositoryName: *repoName})

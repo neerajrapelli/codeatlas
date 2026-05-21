@@ -4,13 +4,17 @@ import (
 	"context"
 	"fmt"
 
+	"codeatlas/apps/api/internal/telemetry"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func NewPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
+func NewPool(ctx context.Context, databaseURL string, traceDB bool) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
+	}
+	if traceDB && telemetry.Enabled() {
+		cfg.ConnConfig.Tracer = telemetry.PGXTracer()
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

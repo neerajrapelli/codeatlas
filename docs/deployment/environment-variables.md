@@ -26,6 +26,10 @@ Variables read by the codebase (from `config.Load`, Vite, Compose, or Pydantic s
 | `WORKSPACE_ROOT` | `./workspace` | Clone/extract directory |
 | `ZIP_MAX_BYTES` | `104857600` | Max ZIP upload (100MB) |
 | `ZIP_MAX_FILES` | `5000` | Max files in ZIP |
+| `EMBEDDING_MAX_PER_REPO` | `0` | Max embedding API calls per ingest (`0` = unlimited; try `500`–`2000` for faster dev) |
+| `MAX_INDEX_FILE_BYTES` | `5242880` | Skip indexing files larger than 5MB |
+| `MAX_INDEX_FILES` | `5000` | Max source files indexed per repo |
+| `MAX_REPO_BYTES` | `524288000` | Max total bytes indexed per repo |
 | `OPENAI_API_KEY` | — | Embeddings + OpenAI provider |
 | `OPENAI_CHAT_MODEL` | `gpt-4o-mini` | Chat model |
 | `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model |
@@ -71,6 +75,14 @@ Variables read by the codebase (from `config.Load`, Vite, Compose, or Pydantic s
 ```env
 DATABASE_URL=postgresql://codeatlas:codeatlas@localhost:5432/codeatlas
 ```
+
+**Faster local ingest (cap slow OpenAI embeddings):**
+
+```env
+EMBEDDING_MAX_PER_REPO=500
+```
+
+Graph, symbols, and search still work; only vector coverage is partial beyond the cap.
 
 **Full local with AI + socio:**
 

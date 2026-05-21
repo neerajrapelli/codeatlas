@@ -1,4 +1,4 @@
-.PHONY: help install dev dev-full build lint lint-ruff format typecheck clean docker-up docker-down docker-logs db-shell ai-sync index-repo test test-parser test-graph test-e2e smoke-compose smoke-compose-down
+.PHONY: help install dev dev-full build lint lint-ruff format typecheck clean docker-up docker-down docker-logs db-migrate db-shell ai-sync index-repo test test-parser test-graph test-e2e smoke-compose smoke-compose-down
 
 help:
 	@echo "CodeAtlas development commands"
@@ -75,6 +75,9 @@ docker-up:
 
 docker-down:
 	docker compose down
+
+db-migrate:
+	cd apps/api && go run ./cmd/migrate
 
 docker-logs:
 	docker compose logs -f postgres

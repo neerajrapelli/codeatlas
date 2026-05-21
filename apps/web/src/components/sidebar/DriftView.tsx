@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import { useStore } from '../../store';
 import type { ArchitectureRule, ArchitectureRuleType, RuleViolation } from '../../types';
+import { EmptyState } from '../ui/EmptyState';
 
 export function DriftView() {
   const activeRepoId = useStore((s) => s.activeRepoId);
@@ -42,17 +43,39 @@ export function DriftView() {
     if (fileId) setSelectedNode(fileId, path);
   };
 
+  if (activeRepoId == null) {
+    return (
+      <div className="sidebar-view">
+        <h3 className="sidebar-section-title">ARCHITECTURE DRIFT</h3>
+        <EmptyState
+          icon="codicon-shield"
+          title="No repository"
+          description="Select a repository to define rules and detect drift."
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="sidebar-view">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div className="sidebar-view__header-row">
         <h3 className="sidebar-section-title">ARCHITECTURE RULES</h3>
-        <button type="button" className="btn-secondary" disabled={activeRepoId == null} onClick={() => setModalOpen(true)}>
+        <button type="button" className="btn-secondary" onClick={() => setModalOpen(true)}>
           + Add Rule
         </button>
       </div>
 
       {rules.length === 0 ? (
-        <p className="empty-state">No rules yet. Add a rule to detect drift.</p>
+        <EmptyState
+          icon="codicon-shield"
+          title="No rules yet"
+          description="Add import boundaries and layer rules to catch architectural drift automatically."
+          action={
+            <button type="button" className="btn-primary" onClick={() => setModalOpen(true)}>
+              Add first rule
+            </button>
+          }
+        />
       ) : (
         <ul className="drift-rules-list">
           {rules.map((rule) => (
@@ -63,7 +86,6 @@ export function DriftView() {
                 className="btn-icon"
                 title="Delete rule"
                 onClick={() => {
-                  if (activeRepoId == null) return;
                   void api.deleteRule(activeRepoId, rule.id).then(refresh);
                 }}
               >
@@ -74,15 +96,14 @@ export function DriftView() {
         </ul>
       )}
 
-      <h3 className="sidebar-section-title" style={{ marginTop: 16 }}>
+      <h3 className="sidebar-section-title sidebar-section-title--spaced">
         VIOLATIONS ({violations.length} active)
       </h3>
       <button
         type="button"
         className="btn-secondary"
-        disabled={activeRepoId == null || busy}
+        disabled={busy}
         onClick={() => {
-          if (activeRepoId == null) return;
           setBusy(true);
           void api
             .validateRules(activeRepoId)
@@ -94,7 +115,11 @@ export function DriftView() {
       </button>
 
       {violations.length === 0 ? (
-        <p className="empty-state">No active violations.</p>
+        <EmptyState
+          icon="codicon-check"
+          title="No active violations"
+          description="Run validation after changing rules or merging code to refresh the violation list."
+        />
       ) : (
         <ul className="drift-violations-list">
           {violations.map((v) => (
@@ -109,10 +134,7 @@ export function DriftView() {
             <h4>Add architecture rule</h4>
             <label>
               Rule name
-              <input
-                value={form.name}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              />
+              <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
             </label>
             <label>
               Type
@@ -168,7 +190,7 @@ export function DriftView() {
                 type="button"
                 className="btn-primary"
                 onClick={() => {
-                  if (activeRepoId == null || !form.name) return;
+                  if (!form.name) return;
                   void api
                     .createRule(activeRepoId, form)
                     .then(() => {

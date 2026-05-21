@@ -1,6 +1,10 @@
 package repoingest
 
-import "time"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 type SourceType string
 
@@ -25,11 +29,16 @@ const (
 )
 
 type CreateRequest struct {
-	SourceType SourceType `json:"sourceType"`
-	SourceURL  string     `json:"sourceUrl"`
-	Branch     string     `json:"branch"`
-	DisplayName string    `json:"displayName"`
-	ZIPPath    string
+	SourceType           SourceType `json:"sourceType"`
+	SourceURL            string     `json:"sourceUrl"`
+	Branch               string     `json:"branch"`
+	DisplayName          string     `json:"displayName"`
+	ZIPPath              string
+	ProviderTokenID      *uuid.UUID `json:"providerTokenId,omitempty"`
+	ExternalRepoID       string     `json:"externalRepoId,omitempty"`
+	ExternalRepoFullName string     `json:"externalRepoFullName,omitempty"`
+	TenantID             string
+	UserSubject          string
 }
 
 type Repository struct {

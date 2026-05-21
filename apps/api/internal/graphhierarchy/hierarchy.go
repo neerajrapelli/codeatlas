@@ -49,10 +49,11 @@ type fileRow struct {
 }
 
 // BuildLayer returns clusters + direct files under prefix, plus aggregated cross-node edges.
-func BuildLayer(ctx context.Context, pool *pgxpool.Pool, repositoryID int64, prefix string) (*Layer, error) {
+// maxDepth limits folder navigation depth (0 = no limit).
+func BuildLayer(ctx context.Context, pool *pgxpool.Pool, repositoryID int64, tenantID, prefix string, maxDepth int) (*Layer, error) {
 	prefix = normPath(prefix)
 
-	files, deps, err := loadRepoGraph(ctx, pool, repositoryID)
+	files, deps, err := loadRepoGraph(ctx, pool, repositoryID, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -135,6 +136,18 @@ func BuildLayer(ctx context.Context, pool *pgxpool.Pool, repositoryID int64, pre
 	if prefix != "" {
 		prefixDepth = strings.Count(prefix, "/") + 1
 	}
+	if maxDepth > 0 && prefixDepth >= maxDepth {
+		outFiles := make([]FileSummary, 0, len(directFiles))
+		for _, f := range directFiles {
+			outFiles = append(outFiles, FileSummary{
+				ID:          strconv.FormatInt(f.id, 10),
+				Path:        f.path,
+				SymbolCount: f.symCount,
+			})
+		}
+		sort.Slice(outFiles, func(i, j int) bool { return outFiles[i].Path < outFiles[j].Path })
+		return &Layer{Prefix: prefix, Files: outFiles, Clusters: nil, Edges: nil}, nil
+	}
 
 	outClusters := make([]ClusterSummary, 0, len(clusters))
 	for cp, a := range clusters {
@@ -180,14 +193,14 @@ func BuildLayer(ctx context.Context, pool *pgxpool.Pool, repositoryID int64, pre
 	}, nil
 }
 
-func loadRepoGraph(ctx context.Context, pool *pgxpool.Pool, repositoryID int64) ([]fileRow, []struct{ from, to int64 }, error) {
+func loadRepoGraph(ctx context.Context, pool *pgxpool.Pool, repositoryID int64, tenantID string) ([]fileRow, []struct{ from, to int64 }, error) {
 	rows, err := pool.Query(ctx, `
 		SELECT f.id, f.relative_path,
 		       COALESCE((SELECT COUNT(*) FROM symbols s WHERE s.file_id = f.id AND s.repository_id = f.repository_id), 0)::int
 		FROM files f
-		WHERE f.repository_id = $1
+		WHERE f.repository_id = $1 AND ($2 = '' OR f.tenant_id = $2)
 		ORDER BY f.relative_path
-	`, repositoryID)
+	`, repositoryID, tenantID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list files: %w", err)
 	}
@@ -206,8 +219,9 @@ func loadRepoGraph(ctx context.Context, pool *pgxpool.Pool, repositoryID int64) 
 	}
 
 	drows, err := pool.Query(ctx, `
-		SELECT from_file_id, to_file_id FROM file_dependencies WHERE repository_id = $1
-	`, repositoryID)
+		SELECT from_file_id, to_file_id FROM file_dependencies
+		WHERE repository_id = $1 AND ($2 = '' OR tenant_id = $2)
+	`, repositoryID, tenantID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list deps: %w", err)
 	}

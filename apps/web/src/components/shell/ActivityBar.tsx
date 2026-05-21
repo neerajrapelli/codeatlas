@@ -30,7 +30,7 @@ export function ActivityBar() {
           aria-current={sidebarView === item.view ? 'page' : undefined}
           onClick={() => setSidebarView(item.view)}
         >
-          <i className={`codicon ${item.icon}`} />
+          <i className={`codicon ${item.icon} activity-bar__icon`} aria-hidden />
         </button>
       ))}
       <div className="activity-bar__spacer" />
@@ -41,7 +41,7 @@ export function ActivityBar() {
         aria-label="Settings"
         onClick={() => setSidebarView('settings')}
       >
-        <i className="codicon codicon-settings-gear" />
+        <i className="codicon codicon-settings-gear activity-bar__icon" aria-hidden />
       </button>
     </nav>
   );

@@ -1,6 +1,8 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 
 import { api } from '../lib/api';
+import { queryKeys } from '../lib/queryKeys';
 
 export interface IngestionStep {
   name: string;
@@ -24,6 +26,7 @@ export interface IngestionProgress {
 export function useIngestionProgress(repoId: string | number | null) {
   const [progress, setProgress] = useState<IngestionProgress | null>(null);
   const [fading, setFading] = useState(false);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     if (repoId == null) {
@@ -41,6 +44,11 @@ export function useIngestionProgress(repoId: string | number | null) {
         setProgress(next);
         if (next.status === 'complete') {
           setFading(true);
+          void queryClient.invalidateQueries({ queryKey: queryKeys.repositories });
+          if (!Number.isNaN(id)) {
+            void queryClient.invalidateQueries({ queryKey: queryKeys.repoSync(id) });
+            void queryClient.invalidateQueries({ queryKey: ['graph', 'clusters', id] });
+          }
           window.setTimeout(() => {
             setProgress(null);
             setFading(false);
@@ -62,7 +70,7 @@ export function useIngestionProgress(repoId: string | number | null) {
     return () => {
       es.close();
     };
-  }, [repoId]);
+  }, [repoId, queryClient]);
 
   return { progress, fading };
 }

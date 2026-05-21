@@ -1,13 +1,13 @@
+import { Command } from 'cmdk';
 import Fuse, { type FuseResult, type FuseOptionKey } from 'fuse.js';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useMemo, useState } from 'react';
 
 import { basename } from '../../lib/fileType';
 import { loadRecentCommands, pushRecentCommand } from '../../lib/recentCommands';
 import type { SidebarView } from '../../types';
 import { useStore } from '../../store';
 
-type CommandGroup = 'recent' | 'actions' | 'views' | 'files';
+type CommandGroup = 'recent' | 'repos' | 'ai' | 'actions' | 'views' | 'files';
 
 type PaletteItem = {
   id: string;
@@ -21,10 +21,19 @@ type PaletteItem = {
 
 const GROUP_LABELS: Record<CommandGroup, string> = {
   recent: 'Recent',
+  repos: 'Repositories',
+  ai: 'AI',
   actions: 'Actions',
   views: 'Views',
   files: 'Files & hotspots',
 };
+
+const AI_PROMPTS = [
+  { id: 'ai-breaks', label: 'What breaks if auth changes?', icon: 'codicon-sparkle' },
+  { id: 'ai-risk', label: 'Show highest risk files', icon: 'codicon-sparkle' },
+  { id: 'ai-owner', label: 'Who owns checkout?', icon: 'codicon-sparkle' },
+  { id: 'ai-trace', label: 'Trace this dependency', icon: 'codicon-sparkle' },
+];
 
 const VIEW_COMMANDS: Array<{ view: SidebarView; label: string; icon: string }> = [
   { view: 'repos', label: 'Repositories', icon: 'codicon-folder-opened' },
@@ -59,138 +68,45 @@ function useModKey(): string {
   return typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform) ? '⌘' : 'Ctrl+';
 }
 
-function PaletteShell({
-  ariaLabel,
-  placeholder,
-  footerHints,
-  q,
-  setQ,
+function PaletteGroups({
   items,
-  idx,
-  setIdx,
-  onClose,
   renderLabel,
 }: {
-  ariaLabel: string;
-  placeholder: string;
-  footerHints: ReactNode;
-  q: string;
-  setQ: (v: string) => void;
   items: PaletteItem[];
-  idx: number;
-  setIdx: (fn: (i: number) => number) => void;
-  onClose: () => void;
   renderLabel?: (item: PaletteItem) => string;
 }) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const t = window.setTimeout(() => inputRef.current?.focus(), 0);
-    return () => window.clearTimeout(t);
-  }, []);
-
-  useEffect(() => {
-    const el = listRef.current?.querySelector('.command-palette__item--active');
-    el?.scrollIntoView({ block: 'nearest' });
-  }, [idx]);
-
-  const select = (i: number) => {
-    const item = items[i];
-    if (item) item.action();
-  };
-
-  let lastGroup: CommandGroup | null = null;
-  const rows: ReactNode[] = [];
-  items.forEach((item, i) => {
-    if (item.group !== lastGroup) {
-      lastGroup = item.group;
-      rows.push(
-        <div key={`g-${item.group}-${i}`} className="command-palette__group">
-          {GROUP_LABELS[item.group]}
-        </div>,
-      );
-    }
-    const label = renderLabel ? renderLabel(item) : item.label;
-    rows.push(
-      <button
-        key={item.id}
-        type="button"
-        className={`command-palette__item ${i === idx ? 'command-palette__item--active' : ''}`}
-        onClick={() => select(i)}
-        onMouseEnter={() => setIdx(() => i)}
-      >
-        <span className="command-palette__item-main">
-          <i className={`codicon ${item.icon}`} aria-hidden />
-          <span className="command-palette__label" title={item.label}>
-            {label}
-          </span>
-        </span>
-        {item.sub ? <span className="command-palette__sub">{item.sub}</span> : null}
-      </button>,
-    );
-  });
-
+  const groups: CommandGroup[] = [];
+  for (const item of items) {
+    if (!groups.includes(item.group)) groups.push(item.group);
+  }
   return (
-    <div className="command-palette-overlay" onClick={onClose} role="presentation">
-      <div
-        className="command-palette"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-label={ariaLabel}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') {
-            e.stopPropagation();
-            onClose();
-          }
-          if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            setIdx((i) => Math.min(items.length - 1, i + 1));
-          }
-          if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            setIdx((i) => Math.max(0, i - 1));
-          }
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            select(idx);
-          }
-        }}
-      >
-        <div className="command-palette__input-row">
-          <i className="codicon codicon-search command-palette__input-icon" aria-hidden />
-          <input
-            ref={inputRef}
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder={placeholder}
-            aria-label="Palette search"
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </div>
-        <div className="command-palette__list" ref={listRef}>
-          {items.length === 0 ? (
-            <p className="command-palette__empty">No matches</p>
-          ) : (
-            rows
-          )}
-        </div>
-        <footer className="command-palette__footer">
-          <span>
-            <kbd>↑↓</kbd> navigate
-          </span>
-          <span>
-            <kbd>↵</kbd> run
-          </span>
-          <span>
-            <kbd>Esc</kbd> close
-          </span>
-          {footerHints}
-        </footer>
-      </div>
-    </div>
+    <>
+      {groups.map((group) => (
+        <Command.Group key={group} heading={GROUP_LABELS[group]} className="command-palette__group">
+          {items
+            .filter((i) => i.group === group)
+            .map((item) => {
+              const label = renderLabel ? renderLabel(item) : item.label;
+              return (
+                <Command.Item
+                  key={item.id}
+                  value={item.searchText}
+                  onSelect={item.action}
+                  className="command-palette__item"
+                >
+                  <span className="command-palette__item-main">
+                    <i className={`codicon ${item.icon}`} aria-hidden />
+                    <span className="command-palette__label" title={item.label}>
+                      {label}
+                    </span>
+                  </span>
+                  {item.sub ? <span className="command-palette__sub">{item.sub}</span> : null}
+                </Command.Item>
+              );
+            })}
+        </Command.Group>
+      ))}
+    </>
   );
 }
 
@@ -200,14 +116,18 @@ export function CommandPalette() {
   const setOpen = useStore((s) => s.setCommandPaletteOpen);
   const clusterLayer = useStore((s) => s.clusterLayer);
   const hotspots = useStore((s) => s.hotspots);
+  const repositories = useStore((s) => s.repositories);
+  const activeRepoId = useStore((s) => s.activeRepoId);
+  const selectedNodePath = useStore((s) => s.selectedNodePath);
   const setSelectedNode = useStore((s) => s.setSelectedNode);
   const setSidebarView = useStore((s) => s.setSidebarView);
   const setFocusRepoInput = useStore((s) => s.setFocusRepoInput);
+  const setActiveRepo = useStore((s) => s.setActiveRepo);
   const toggleBottomPanel = useStore((s) => s.toggleBottomPanel);
+  const bottomPanelOpen = useStore((s) => s.bottomPanelOpen);
+  const setAiPanelDraft = useStore((s) => s.setAiPanelDraft);
   const toggleInspector = useStore((s) => s.toggleInspector);
-  const activeRepoId = useStore((s) => s.activeRepoId);
   const [q, setQ] = useState('');
-  const [idx, setIdx] = useState(0);
   const [recentVersion, setRecentVersion] = useState(0);
   const modKey = useModKey();
 
@@ -219,6 +139,13 @@ export function CommandPalette() {
       setRecentVersion((v) => v + 1);
       action();
     };
+  };
+
+  const openAiPrompt = (prompt: string) => {
+    if (!bottomPanelOpen) toggleBottomPanel();
+    setAiPanelDraft(prompt);
+    setSidebarView('map');
+    close();
   };
 
   const allCommands = useMemo((): PaletteItem[] => {
@@ -241,6 +168,36 @@ export function CommandPalette() {
         action: runCommand(id, label, action),
       });
     };
+
+    for (const r of repositories) {
+      const active = r.id === activeRepoId;
+      add(
+        'repos',
+        `repo-${String(r.id)}`,
+        r.name,
+        active ? 'codicon-check' : 'codicon-repo',
+        () => {
+          setActiveRepo(r.id);
+          setSidebarView('map');
+          close();
+        },
+        active ? 'Active repository' : 'Switch repository',
+      );
+    }
+
+    for (const p of AI_PROMPTS) {
+      add('ai', p.id, `Ask AI: ${p.label}`, p.icon, () => openAiPrompt(p.label), 'Architecture assistant');
+    }
+    if (selectedNodePath) {
+      add(
+        'ai',
+        'ai-selected-file',
+        `Ask AI about ${basename(selectedNodePath)}`,
+        'codicon-sparkle',
+        () => openAiPrompt(`Explain architecture and risks for file ${selectedNodePath}`),
+        selectedNodePath,
+      );
+    }
 
     add('actions', 'add-repo', 'Add repository', 'codicon-add', () => {
       setSidebarView('repos');
@@ -279,7 +236,11 @@ export function CommandPalette() {
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- recentVersion busts recent section
   }, [
+    repositories,
     activeRepoId,
+    selectedNodePath,
+    bottomPanelOpen,
+    setActiveRepo,
     setSidebarView,
     setFocusRepoInput,
     toggleBottomPanel,
@@ -322,7 +283,7 @@ export function CommandPalette() {
     return list;
   }, [clusterLayer, hotspots, setSelectedNode, setSidebarView]);
 
-  const commandItems = useMemo(() => {
+  const unifiedItems = useMemo(() => {
     const query = q.trim();
     if (!query) {
       const recent = loadRecentCommands();
@@ -337,72 +298,75 @@ export function CommandPalette() {
         }
       }
       const rest = allCommands.filter((c) => !recentIds.has(c.id));
-      return [...recentItems, ...rest].slice(0, 24);
+      const files = allFiles.slice(0, 12);
+      return [...recentItems, ...rest, ...files].slice(0, 40);
     }
-    return filterWithFuse(allCommands, query).slice(0, 24);
-  }, [q, allCommands, recentVersion]);
+    const cmds = filterWithFuse(allCommands, query);
+    const files = filterWithFuse(allFiles, query);
+    return [...cmds, ...files].slice(0, 40);
+  }, [q, allCommands, allFiles, recentVersion]);
 
-  const fileItems = useMemo(() => {
-    const filtered = filterWithFuse(allFiles, q);
-    return filtered.slice(0, 24);
-  }, [q, allFiles]);
+  const fileItems = useMemo(() => filterWithFuse(allFiles, q).slice(0, 32), [q, allFiles]);
+
+  const items = mode === 'files' ? fileItems : unifiedItems;
 
   useEffect(() => {
-    if (!open) {
-      setQ('');
-      setIdx(0);
-    }
+    if (!open) setQ('');
   }, [open]);
-
-  useEffect(() => {
-    setIdx(0);
-  }, [q, mode]);
 
   if (!open) return null;
 
-  if (mode === 'files') {
-    return createPortal(
-      <PaletteShell
-        ariaLabel="Quick open"
-        placeholder="Search files by path…"
-        footerHints={
-          <span className="command-palette__footer-hint">
-            {modKey}P files · {modKey}⇧P commands
-          </span>
-        }
-        q={q}
-        setQ={setQ}
-        items={fileItems}
-        idx={idx}
-        setIdx={setIdx}
-        onClose={close}
-        renderLabel={(item) => basename(item.label)}
-      />,
-      document.body,
-    );
-  }
+  const placeholder =
+    mode === 'files'
+      ? 'Search files by path…'
+      : 'Search files, repositories, commands, AI…';
 
-  return createPortal(
-    <PaletteShell
-      ariaLabel="Command palette"
-      placeholder="Search commands and views…"
-      footerHints={
-        <span className="command-palette__footer-hint">
-          {modKey}K · {modKey}P files · {modKey}⇧P commands
-        </span>
-      }
-      q={q}
-      setQ={setQ}
-      items={commandItems}
-      idx={idx}
-      setIdx={setIdx}
-      onClose={close}
-    />,
-    document.body,
+  return (
+    <Command.Dialog
+      open={open}
+      onOpenChange={(v) => !v && close()}
+      label={mode === 'files' ? 'Quick open' : 'Command palette'}
+      shouldFilter={false}
+      className="command-palette-overlay"
+    >
+      <div className="command-palette" onClick={(e) => e.stopPropagation()}>
+        <div className="command-palette__input-row">
+          <i className="codicon codicon-search command-palette__input-icon" aria-hidden />
+          <Command.Input
+            value={q}
+            onValueChange={setQ}
+            placeholder={placeholder}
+            aria-label="Palette search"
+            autoComplete="off"
+          />
+        </div>
+        <Command.List className="command-palette__list">
+          <Command.Empty className="command-palette__empty">No matches</Command.Empty>
+          <PaletteGroups
+            items={items}
+            renderLabel={mode === 'files' ? (item) => basename(item.label) : undefined}
+          />
+        </Command.List>
+        <footer className="command-palette__footer">
+          <span>
+            <kbd>↑↓</kbd> navigate
+          </span>
+          <span>
+            <kbd>↵</kbd> run
+          </span>
+          <span>
+            <kbd>Esc</kbd> close
+          </span>
+          <span className="command-palette__footer-hint">
+            {modKey}K palette · {modKey}P files · {modKey}⇧P palette
+          </span>
+        </footer>
+      </div>
+    </Command.Dialog>
   );
 }
 
-/** Title bar entry — opens command palette (not quick open). */
+/** Title bar entry — opens unified command palette. */
 export function CommandPaletteTrigger({ onOpen }: { onOpen: () => void }) {
   const modKey = useModKey();
 
@@ -412,7 +376,7 @@ export function CommandPaletteTrigger({ onOpen }: { onOpen: () => void }) {
       className="command-trigger"
       onClick={onOpen}
       aria-label="Open command palette"
-      title={`Command palette (${modKey}K, ${modKey}⇧P)`}
+      title={`Command palette (${modKey}K)`}
     >
       <i className="codicon codicon-search" aria-hidden />
       <span className="command-trigger__label">Search commands…</span>

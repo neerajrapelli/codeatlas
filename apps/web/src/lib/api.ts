@@ -41,11 +41,94 @@ export const api = {
     return Array.isArray(json.repositories) ? json.repositories : [];
   },
 
+  getAuthProviders: async (): Promise<
+    { provider: string; connected: boolean; tokenType?: string }[]
+  > => {
+    const json = await apiJson<{ providers?: { provider: string; connected: boolean }[] }>(
+      '/auth/providers',
+    );
+    return Array.isArray(json.providers) ? json.providers : [];
+  },
+
+  connectProviderOAuth: async (provider: 'github' | 'gitlab' | 'bitbucket') => {
+    const json = await apiPostJson<{ authorizeUrl: string }>(`/auth/${provider}/login`, {});
+    if (json.authorizeUrl) {
+      window.open(json.authorizeUrl, '_blank', 'noopener,noreferrer');
+    }
+    return json;
+  },
+
+  saveProviderToken: async (
+    provider: 'github' | 'gitlab' | 'bitbucket',
+    token: string,
+    tokenType?: 'pat' | 'app_password',
+  ) => {
+    return apiPostJson(`/auth/${provider}/token`, { token, tokenType });
+  },
+
+  listRemoteRepositories: async (
+    provider: 'github' | 'gitlab' | 'bitbucket',
+    page = 1,
+  ): Promise<
+    {
+      id: string;
+      fullName: string;
+      cloneUrl: string;
+      defaultBranch: string;
+      private: boolean;
+    }[]
+  > => {
+    const json = await apiJson<{
+      repositories?: {
+        id: string;
+        fullName: string;
+        cloneUrl: string;
+        defaultBranch: string;
+        private: boolean;
+      }[];
+    }>(`/auth/${provider}/repositories?page=${String(page)}`);
+    return Array.isArray(json.repositories) ? json.repositories : [];
+  },
+
+  uploadZipRepository: async (file: File, displayName?: string): Promise<Repository> => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('sourceType', 'zip');
+    if (displayName) form.append('displayName', displayName);
+    const res = await apiFetch('/repos/upload-zip', { method: 'POST', body: form });
+    if (!res.ok) {
+      const err = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(err.error ?? `upload ${String(res.status)}`);
+    }
+    const json = (await res.json()) as { repository?: Repository } | Repository;
+    if (json && typeof json === 'object' && 'repository' in json && json.repository) {
+      return json.repository;
+    }
+    return json as Repository;
+  },
+
+  getIngestionJob: async (jobId: string) => {
+    return apiJson<{
+      jobId: string;
+      repositoryId: string;
+      status: string;
+      progress?: unknown;
+      error?: string;
+    }>(`/ingestion/jobs/${jobId}`);
+  },
+
+  syncRepository: async (repositoryId: number) => {
+    return apiPostJson('/repos/sync', { repositoryId });
+  },
+
   addRepository: async (body: {
     sourceType: string;
     sourceUrl?: string;
     branch?: string;
     displayName?: string;
+    providerTokenId?: string;
+    externalRepoId?: string;
+    externalRepoFullName?: string;
   }): Promise<Repository> => {
     const res = await apiFetch('/repositories', {
       method: 'POST',
@@ -63,8 +146,12 @@ export const api = {
     return json as Repository;
   },
 
-  deleteRepository: async (id: number) => {
-    return apiJson(`/repositories/${String(id)}`, { method: 'DELETE' });
+  deleteRepository: async (id: number): Promise<void> => {
+    const res = await apiFetch(`/repositories/${String(id)}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const err = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(err.error ?? `delete repository ${String(res.status)}`);
+    }
   },
 
   reindexRepository: async (id: number) => {
@@ -197,6 +284,17 @@ export const api = {
     }
   },
 
+  listTeamFiles: async (repositoryId: number, teamId: string): Promise<string[]> => {
+    try {
+      const json = await apiJson<{ files?: string[] }>(
+        `/repositories/${String(repositoryId)}/teams/${encodeURIComponent(teamId)}/files`,
+      );
+      return Array.isArray(json.files) ? json.files : [];
+    } catch {
+      return [];
+    }
+  },
+
   getBoundaryViolations: async (repositoryId: number): Promise<BoundaryViolationRow[]> => {
     try {
       const json = await apiJson<{ violations?: BoundaryViolationRow[] }>(
@@ -225,7 +323,11 @@ export const api = {
   ): Promise<OnboardingPlan> => {
     return apiPostJson<OnboardingPlan>(
       `/repositories/${String(repositoryId)}/onboarding-plan`,
-      body,
+      {
+        role: body.role,
+        experience_level: body.experience_level,
+        focus_area: body.team,
+      },
     );
   },
 
@@ -262,7 +364,9 @@ export const api = {
     onEvent: (ev: {
       type: string;
       token?: string;
+      content?: string;
       relatedFiles?: Array<{ fileId: number; path: string; reason: string }>;
+      validation?: { paths?: Record<string, boolean>; rules?: Record<string, boolean> };
       error?: string;
     }) => void,
   ) => {

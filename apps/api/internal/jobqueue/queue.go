@@ -16,6 +16,7 @@ type JobQueue interface {
 	Fail(ctx context.Context, jobID string, errMsg string) error
 	GetStatus(ctx context.Context, repositoryID string) (*Job, error)
 	GetLatestForRepository(ctx context.Context, repositoryID int64) (*Job, error)
+	GetByID(ctx context.Context, jobID string) (*Job, error)
 }
 
 type Job struct {

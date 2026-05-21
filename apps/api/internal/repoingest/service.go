@@ -14,9 +14,11 @@ import (
 	"codeatlas/apps/api/internal/driftdetector"
 	"codeatlas/apps/api/internal/teams"
 	"codeatlas/apps/api/internal/indexer"
+	"codeatlas/apps/api/internal/tenant"
 	"codeatlas/apps/api/internal/ingestprogress"
 	"codeatlas/apps/api/internal/ingestion"
 	"codeatlas/apps/api/internal/jobqueue"
+	"codeatlas/apps/api/internal/vcsauth"
 )
 
 type Service struct {
@@ -25,11 +27,14 @@ type Service struct {
 	indexer       *indexer.Service
 	socioIngest   *ingestion.Service
 	queue         jobqueue.JobQueue
-	broadcaster   *ingestprogress.Broadcaster
+	progressBus   ingestprogress.EventBus
 	driftEngine   *driftdetector.Engine
 	teamsSvc      *teams.Service
 	sources       map[SourceType]Source
-	logger        *slog.Logger
+	repoSources   *vcsauth.Store
+	logger             *slog.Logger
+	parseWorkers       int
+	embeddingsEnabled  bool
 }
 
 func NewService(
@@ -38,30 +43,43 @@ func NewService(
 	idx *indexer.Service,
 	socioIngest *ingestion.Service,
 	queue jobqueue.JobQueue,
-	broadcaster *ingestprogress.Broadcaster,
+	progressBus ingestprogress.EventBus,
 	driftEngine *driftdetector.Engine,
 	teamsSvc *teams.Service,
 	logger *slog.Logger,
 	zipMaxBytes int64,
 	zipMaxFiles int,
+	parseWorkers int,
+	cloneResolver CloneResolver,
+	repoSources *vcsauth.Store,
+	embeddingsEnabled bool,
 ) *Service {
-	return &Service{
-		workspaceRoot: workspaceRoot,
-		store:         store,
-		indexer:       idx,
-		socioIngest:   socioIngest,
-		queue:         queue,
-		broadcaster:   broadcaster,
-		driftEngine:   driftEngine,
-		teamsSvc:      teamsSvc,
-		logger:        logger,
+	svc := &Service{
+		workspaceRoot:       workspaceRoot,
+		store:               store,
+		indexer:             idx,
+		socioIngest:         socioIngest,
+		queue:               queue,
+		progressBus:         progressBus,
+		driftEngine:         driftEngine,
+		teamsSvc:            teamsSvc,
+		logger:              logger,
+		parseWorkers:        parseWorkers,
+		embeddingsEnabled:   embeddingsEnabled,
 		sources: map[SourceType]Source{
 			SourceGitHub:    NewGitSource(SourceGitHub),
 			SourceGitLab:    NewGitSource(SourceGitLab),
 			SourceBitbucket: NewGitSource(SourceBitbucket),
 			SourceZIP:       NewZIPSource(zipMaxBytes, zipMaxFiles),
 		},
+		repoSources: repoSources,
 	}
+	for _, st := range []SourceType{SourceGitHub, SourceGitLab, SourceBitbucket} {
+		if g, ok := svc.sources[st].(*GitSource); ok {
+			g.SetCloneResolver(cloneResolver)
+		}
+	}
+	return svc
 }
 
 func (s *Service) Ingest(ctx context.Context, req CreateRequest) (Repository, error) {
@@ -69,8 +87,10 @@ func (s *Service) Ingest(ctx context.Context, req CreateRequest) (Repository, er
 	if !ok {
 		return Repository{}, fmt.Errorf("unsupported source type: %s", req.SourceType)
 	}
-	if req.SourceType != SourceZIP && !strings.HasPrefix(req.SourceURL, "http") {
-		return Repository{}, fmt.Errorf("sourceUrl must be an http(s) URL")
+	if req.SourceType != SourceZIP {
+		if err := validateGitIngestRequest(req); err != nil {
+			return Repository{}, err
+		}
 	}
 
 	workspacePath, err := s.prepareWorkspacePath(req.SourceType)
@@ -114,8 +134,11 @@ func (s *Service) Ingest(ctx context.Context, req CreateRequest) (Repository, er
 	}
 
 	_, err = s.indexer.Run(ctx, indexer.Request{
+		RepositoryID:   repo.ID,
 		RepositoryPath: workspacePath,
 		RepositoryName: repoName,
+		TenantID:       tenant.Normalize(repo.TenantID),
+		ParseWorkers:   s.parseWorkers,
 	})
 	if err != nil {
 		_ = s.store.UpdateStatus(ctx, repo.ID, StatusFailed, err.Error())
@@ -137,11 +160,8 @@ func (s *Service) Enqueue(ctx context.Context, req CreateRequest, tenantID strin
 	if _, ok := s.sources[req.SourceType]; !ok {
 		return Repository{}, "", fmt.Errorf("unsupported source type: %s", req.SourceType)
 	}
-	if req.SourceType != SourceZIP && !strings.HasPrefix(req.SourceURL, "http") {
-		return Repository{}, "", fmt.Errorf("sourceUrl must be an http(s) URL")
-	}
 	if req.SourceType != SourceZIP {
-		if err := ValidateGitSourceURL(req.SourceURL); err != nil {
+		if err := validateGitIngestRequest(req); err != nil {
 			return Repository{}, "", err
 		}
 	}
@@ -179,16 +199,34 @@ func (s *Service) Enqueue(ctx context.Context, req CreateRequest, tenantID strin
 		"sourceUrl":   req.SourceURL,
 		"branch":      req.Branch,
 		"displayName": req.DisplayName,
+		"tenantId":    tenantID,
+	}
+	if req.UserSubject != "" {
+		meta["userSubject"] = req.UserSubject
 	}
 	if req.ZIPPath != "" {
 		meta["zipPath"] = req.ZIPPath
+	}
+	if req.ProviderTokenID != nil {
+		meta["providerTokenId"] = req.ProviderTokenID.String()
+	}
+	if req.ExternalRepoID != "" {
+		meta["externalRepoId"] = req.ExternalRepoID
+	}
+	if req.ExternalRepoFullName != "" {
+		meta["externalRepoFullName"] = req.ExternalRepoFullName
 	}
 	jobID, err := s.queue.Enqueue(ctx, strconv.FormatInt(repo.ID, 10), 1, meta)
 	if err != nil {
 		return Repository{}, "", err
 	}
-	if s.broadcaster != nil {
-		s.broadcaster.Publish(repo.ID, ingestprogress.NewQueuedEvent(repo.ID, 1))
+	if s.repoSources != nil {
+		_ = s.repoSources.UpsertRepoSource(ctx, repo.ID, string(req.SourceType), req.ExternalRepoID, req.ExternalRepoFullName, req.ProviderTokenID, map[string]any{
+			"branch": req.Branch,
+		})
+	}
+	if s.progressBus != nil {
+		s.progressBus.Publish(repo.ID, ingestprogress.NewQueuedEvent(repo.ID, 1))
 	}
 	s.logger.Info("repository_ingestion_queued", "repository_id", repo.ID, "job_id", jobID)
 	return repo, jobID, nil
@@ -228,19 +266,21 @@ func (s *Service) processInBackground(repo Repository, req CreateRequest, src So
 	})
 
 	lastProgress := time.Now()
+	var lastStage Status
 	report := func(evt indexer.ProgressEvent) {
 		now := time.Now()
-		if now.Sub(lastProgress) < 500*time.Millisecond && evt.Progress < 100 {
+		stage := Status(evt.Stage)
+		if stage == "" {
+			stage = StatusParsing
+		}
+		stageChanged := stage != lastStage
+		if now.Sub(lastProgress) < 500*time.Millisecond && evt.Progress < 100 &&
+			stage != StatusGeneratingEmbeddings && stage != StatusBuildingGraph && !stageChanged {
 			return
 		}
 		lastProgress = now
-		stage := Status(evt.Stage)
-		progress := 20 + evt.Progress*0.75
-		if stage == StatusGeneratingEmbeddings {
-			if evt.Progress > 100 {
-				progress = 85
-			}
-		}
+		lastStage = stage
+		progress := mapIndexerProgress(stage, evt, s.embeddingsEnabled)
 		_ = s.store.UpdateProgress(ctx, repo.ID, ProgressUpdate{
 			Stage:             stage,
 			ProgressPercent:   progress,
@@ -267,8 +307,11 @@ func (s *Service) processInBackground(repo Repository, req CreateRequest, src So
 	}
 
 	res, err := s.indexer.Run(ctx, indexer.Request{
+		RepositoryID:   repo.ID,
 		RepositoryPath: repo.WorkspacePath,
 		RepositoryName: repo.Name,
+		TenantID:       tenant.Normalize(repo.TenantID),
+		ParseWorkers:   s.parseWorkers,
 		OnProgress:     report,
 	})
 	if err != nil {
@@ -342,11 +385,14 @@ func (s *Service) Delete(ctx context.Context, id int64) (Repository, error) {
 	if err != nil {
 		return Repository{}, err
 	}
-	if repo.WorkspacePath != "" {
-		_ = os.RemoveAll(repo.WorkspacePath)
-	}
-	if err := s.store.DeleteRepository(ctx, id); err != nil {
+	// Guard already verified tenant access; delete by primary key so legacy tenant_id
+	// values on the row cannot cause a silent 0-row delete.
+	if err := s.store.DeleteRepository(ctx, id, ""); err != nil {
 		return Repository{}, err
+	}
+	if repo.WorkspacePath != "" {
+		path := repo.WorkspacePath
+		go func() { _ = os.RemoveAll(path) }()
 	}
 	return repo, nil
 }
@@ -408,8 +454,8 @@ func (s *Service) Reindex(ctx context.Context, id int64) error {
 		if err != nil {
 			return err
 		}
-		if s.broadcaster != nil {
-			s.broadcaster.Publish(id, ingestprogress.NewQueuedEvent(id, 1))
+		if s.progressBus != nil {
+			s.progressBus.Publish(id, ingestprogress.NewQueuedEvent(id, 1))
 		}
 		s.logger.Info("repository_reindex_queued", "repository_id", id, "job_id", jobID)
 		return nil
@@ -427,14 +473,14 @@ func (s *Service) GetIngestionStreamEvent(ctx context.Context, repositoryID int6
 		}
 		if job != nil {
 			ev := job.Progress
-			if s.broadcaster != nil {
-				s.broadcaster.Publish(repositoryID, ev)
+			if s.progressBus != nil {
+				s.progressBus.Publish(repositoryID, ev)
 			}
 			return ev, nil
 		}
 	}
-	if s.broadcaster != nil {
-		if ev, ok := s.broadcaster.Get(repositoryID); ok {
+	if s.progressBus != nil {
+		if ev, ok := s.progressBus.Latest(repositoryID); ok {
 			return ev, nil
 		}
 	}
@@ -445,7 +491,7 @@ func (s *Service) GetIngestionStreamEvent(ctx context.Context, repositoryID int6
 	return ingestprogress.BuildEvent(
 		1,
 		string(progress.Status),
-		ingestprogress.RepoStatusToCurrentStep(string(progress.Stage)),
+		ingestprogress.CurrentStepForProgress(string(progress.Stage), progress.ProgressPercent, s.embeddingsEnabled),
 		progress.Metrics.FilesIndexed,
 		progress.Metrics.FilesIndexed,
 		progress.ProgressPercent,
@@ -501,19 +547,21 @@ func (s *Service) processReindexBackground(repo Repository, req CreateRequest, s
 	}
 
 	lastProgress := time.Now()
+	var lastStage Status
 	report := func(evt indexer.ProgressEvent) {
 		now := time.Now()
-		if now.Sub(lastProgress) < 500*time.Millisecond && evt.Progress < 100 {
+		stage := Status(evt.Stage)
+		if stage == "" {
+			stage = StatusParsing
+		}
+		stageChanged := stage != lastStage
+		if now.Sub(lastProgress) < 500*time.Millisecond && evt.Progress < 100 &&
+			stage != StatusGeneratingEmbeddings && stage != StatusBuildingGraph && !stageChanged {
 			return
 		}
 		lastProgress = now
-		stage := Status(evt.Stage)
-		progress := 20 + evt.Progress*0.75
-		if stage == StatusGeneratingEmbeddings {
-			if evt.Progress > 100 {
-				progress = 85
-			}
-		}
+		lastStage = stage
+		progress := mapIndexerProgress(stage, evt, s.embeddingsEnabled)
 		_ = s.store.UpdateProgress(ctx, repo.ID, ProgressUpdate{
 			Stage:             stage,
 			ProgressPercent:   progress,
@@ -540,8 +588,11 @@ func (s *Service) processReindexBackground(repo Repository, req CreateRequest, s
 	}
 
 	res, err := s.indexer.Run(ctx, indexer.Request{
+		RepositoryID:   repo.ID,
 		RepositoryPath: repo.WorkspacePath,
 		RepositoryName: repo.Name,
+		TenantID:       tenant.Normalize(repo.TenantID),
+		ParseWorkers:   s.parseWorkers,
 		OnProgress:     report,
 	})
 	if err != nil {
@@ -585,6 +636,13 @@ func (s *Service) prepareWorkspacePath(sourceType SourceType) (string, error) {
 		return "", fmt.Errorf("mkdir workspace path: %w", err)
 	}
 	return absWorkspacePath, nil
+}
+
+func validateGitIngestRequest(req CreateRequest) error {
+	if err := ValidateGitSourceURL(req.SourceType, req.SourceURL); err != nil {
+		return err
+	}
+	return ValidateGitBranch(req.Branch)
 }
 
 func deriveName(req CreateRequest) string {

@@ -1,6 +1,7 @@
 ﻿package indexer
 
 import (
+	"fmt"
 	"io/fs"
 	"path/filepath"
 )
@@ -17,7 +18,11 @@ var ignoredDirs = map[string]struct{}{
 }
 
 // MultiLanguageScanner indexes source files for all supported languages.
-type MultiLanguageScanner struct{}
+type MultiLanguageScanner struct {
+	MaxFileBytes int64
+	MaxFiles     int
+	MaxRepoBytes int64
+}
 
 func NewMultiLanguageScanner() *MultiLanguageScanner { return &MultiLanguageScanner{} }
 
@@ -26,6 +31,7 @@ func NewTypeScriptFileScanner() *MultiLanguageScanner { return NewMultiLanguageS
 
 func (s *MultiLanguageScanner) Scan(repoPath string) ([]ScannedFile, error) {
 	files := make([]ScannedFile, 0, 1024)
+	var totalBytes int64
 	err := filepath.WalkDir(repoPath, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -45,6 +51,21 @@ func (s *MultiLanguageScanner) Scan(repoPath string) ([]ScannedFile, error) {
 		lang, ok := LanguageForPath(rel)
 		if !ok {
 			return nil
+		}
+		if s.MaxFiles > 0 && len(files) >= s.MaxFiles {
+			return fmt.Errorf("repository exceeds max indexed files (%d)", s.MaxFiles)
+		}
+		if s.MaxFileBytes > 0 {
+			info, statErr := d.Info()
+			if statErr == nil && info.Size() > s.MaxFileBytes {
+				return nil
+			}
+			if statErr == nil {
+				totalBytes += info.Size()
+				if s.MaxRepoBytes > 0 && totalBytes > s.MaxRepoBytes {
+					return fmt.Errorf("repository exceeds max total size (%d bytes)", s.MaxRepoBytes)
+				}
+			}
 		}
 
 		files = append(files, ScannedFile{

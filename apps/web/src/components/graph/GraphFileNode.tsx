@@ -13,12 +13,21 @@ export const GraphFileNode = memo(function GraphFileNode({ data, selected }: Nod
   const blastDepth = data.blastDepth != null ? Number(data.blastDepth) : null;
   const dimmed = Boolean(data.dim);
   const viol = data.violationSeverity as string | undefined;
+  const highlight = Boolean(data.highlight);
+  const hoverPing = Boolean(data.hoverPing);
+  const metaParts = [
+    `${String(data.symbolCount ?? 0)} symbols`,
+    data.dominantOwnerLogin ? `@${String(data.dominantOwnerLogin)}` : '',
+    isHotspot ? 'churn HIGH' : '',
+  ].filter(Boolean);
 
   return (
     <div
       className={[
         'graph-file-node',
         selected ? 'graph-file-node--selected' : '',
+        highlight ? 'graph-file-node--highlight' : '',
+        hoverPing ? 'graph-file-node--ping' : '',
         isHotspot ? 'graph-file-node--hotspot' : '',
         hasBus ? 'graph-file-node--bus' : '',
         dimmed ? 'graph-file-node--dimmed' : '',
@@ -29,23 +38,22 @@ export const GraphFileNode = memo(function GraphFileNode({ data, selected }: Nod
       ]
         .filter(Boolean)
         .join(' ')}
+      title={path}
     >
       <Handle type="target" position={Position.Left} />
       <div className="graph-file-node__row">
         <FileTypeIcon type={ft} label={fileTypeLabel(ft)} />
         <span className="graph-file-node__path">{basename(path)}</span>
-        {isHotspot ? <i className="codicon codicon-warning" style={{ color: 'var(--color-error)' }} /> : null}
+        {isHotspot ? (
+          <i className="codicon codicon-warning graph-file-node__warn" aria-hidden />
+        ) : null}
         {signals > 0 ? (
-          <span style={{ fontSize: 10, color: 'var(--color-info)' }} title="Signals">
+          <span className="graph-file-node__signals" title="Signals">
             ◆{signals}
           </span>
         ) : null}
       </div>
-      <div className="graph-file-node__meta">
-        {String(data.symbolCount ?? 0)} symbols
-        {data.dominantOwnerLogin ? ` · @${String(data.dominantOwnerLogin)}` : ''}
-        {isHotspot ? <span className="graph-file-node__churn"> · churn HIGH</span> : null}
-      </div>
+      <div className="graph-file-node__meta">{metaParts.join(' · ')}</div>
       <Handle type="source" position={Position.Right} />
     </div>
   );

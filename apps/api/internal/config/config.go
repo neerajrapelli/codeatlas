@@ -32,6 +32,25 @@ type Config struct {
 	ChatRatePerMinute    int
 	IngestWorkerConcurrency int
 	RedisURL                string
+	IndexerParseWorkers     int
+	GraphMaxFileLimit       int
+	GraphMaxDepth           int
+	OTELServiceName         string
+	OTELExporterEndpoint    string
+	OTELDisabled            bool
+	TokenEncryptionKey      string
+	PublicAPIBaseURL        string
+	FrontendURL             string
+	GitHubOAuthClientID     string
+	GitHubOAuthClientSecret string
+	GitLabOAuthClientID     string
+	GitLabOAuthClientSecret string
+	BitbucketOAuthClientID  string
+	BitbucketOAuthClientSecret string
+	MaxIndexFileBytes       int64
+	MaxIndexFiles           int
+	MaxRepoBytes            int64
+	EmbeddingMaxPerRepo     int
 }
 
 func Load() Config {
@@ -61,6 +80,25 @@ func Load() Config {
 		ChatRatePerMinute:    parseInt(getEnv("CHAT_RATE_PER_MINUTE", "30"), 30),
 		IngestWorkerConcurrency: parseInt(getEnv("INGEST_WORKER_CONCURRENCY", "2"), 2),
 		RedisURL:                os.Getenv("REDIS_URL"),
+		IndexerParseWorkers:     parseInt(getEnv("INDEXER_PARSE_WORKERS", "8"), 8),
+		GraphMaxFileLimit:       parseInt(getEnv("GRAPH_MAX_FILE_LIMIT", "500"), 500),
+		GraphMaxDepth:           parseInt(getEnv("GRAPH_MAX_DEPTH", "6"), 6),
+		OTELServiceName:         getEnv("OTEL_SERVICE_NAME", "codeatlas-api"),
+		OTELExporterEndpoint:    os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		OTELDisabled:            getEnv("OTEL_SDK_DISABLED", "false") == "true",
+		TokenEncryptionKey:      os.Getenv("TOKEN_ENCRYPTION_KEY"),
+		PublicAPIBaseURL:        strings.TrimRight(getEnv("PUBLIC_API_BASE_URL", "http://localhost:8080"), "/"),
+		FrontendURL:             strings.TrimRight(getEnv("FRONTEND_URL", "http://localhost:5173"), "/"),
+		GitHubOAuthClientID:     os.Getenv("GITHUB_OAUTH_CLIENT_ID"),
+		GitHubOAuthClientSecret: os.Getenv("GITHUB_OAUTH_CLIENT_SECRET"),
+		GitLabOAuthClientID:     os.Getenv("GITLAB_OAUTH_CLIENT_ID"),
+		GitLabOAuthClientSecret: os.Getenv("GITLAB_OAUTH_CLIENT_SECRET"),
+		BitbucketOAuthClientID:  os.Getenv("BITBUCKET_OAUTH_CLIENT_ID"),
+		BitbucketOAuthClientSecret: os.Getenv("BITBUCKET_OAUTH_CLIENT_SECRET"),
+		MaxIndexFileBytes:       parseInt64(getEnv("MAX_INDEX_FILE_BYTES", "5242880"), 5<<20),
+		MaxIndexFiles:           parseInt(getEnv("MAX_INDEX_FILES", "5000"), 5000),
+		MaxRepoBytes:            parseInt64(getEnv("MAX_REPO_BYTES", "524288000"), 500<<20),
+		EmbeddingMaxPerRepo:     parseInt(getEnv("EMBEDDING_MAX_PER_REPO", "0"), 0),
 	}
 }
 

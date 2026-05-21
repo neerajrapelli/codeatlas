@@ -139,6 +139,36 @@ func (q *PostgresQueue) GetStatus(ctx context.Context, repositoryID string) (*Jo
 	return q.GetLatestForRepository(ctx, repoID)
 }
 
+func (q *PostgresQueue) GetByID(ctx context.Context, jobID string) (*Job, error) {
+	var job Job
+	var progJSON []byte
+	var metaJSON []byte
+	var errMsg *string
+	var startedAt, completedAt *time.Time
+
+	err := q.pool.QueryRow(ctx, `
+		SELECT id::text, repository_id::text, phase, status::text, current_step,
+		       progress_json, metadata, error_msg, queued_at, started_at, completed_at
+		FROM ingestion_jobs
+		WHERE id = $1::uuid
+	`, jobID).Scan(&job.ID, &job.RepositoryID, &job.Phase, &job.Status, &job.CurrentStep,
+		&progJSON, &metaJSON, &errMsg, &job.QueuedAt, &startedAt, &completedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if errMsg != nil {
+		job.ErrorMsg = *errMsg
+	}
+	job.StartedAt = startedAt
+	job.CompletedAt = completedAt
+	_ = json.Unmarshal(progJSON, &job.Progress)
+	_ = json.Unmarshal(metaJSON, &job.Metadata)
+	return &job, nil
+}
+
 func (q *PostgresQueue) GetLatestForRepository(ctx context.Context, repositoryID int64) (*Job, error) {
 	var job Job
 	var progJSON []byte

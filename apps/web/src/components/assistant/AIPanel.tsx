@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { api } from '../../lib/api';
 import { useStore } from '../../store';
-import { NodeCitation } from './NodeCitation';
+import { AssistantMessage } from './AssistantMessage';
 
 const PROMPTS = [
   'What breaks if auth changes?',
@@ -14,8 +14,7 @@ const PROMPTS = [
 export function AIPanel() {
   const bottomPanelOpen = useStore((s) => s.bottomPanelOpen);
   const toggleBottomPanel = useStore((s) => s.toggleBottomPanel);
-  const bottomPanelHeight = useStore((s) => s.bottomPanelHeight);
-  const setBottomPanelHeight = useStore((s) => s.setBottomPanelHeight);
+  const setAiPanelWidth = useStore((s) => s.setAiPanelWidth);
   const activeRepoId = useStore((s) => s.activeRepoId);
   const repositories = useStore((s) => s.repositories);
   const graphPrefix = useStore((s) => s.graphPrefix);
@@ -26,11 +25,25 @@ export function AIPanel() {
   const setHighlightedFileIds = useStore((s) => s.setHighlightedFileIds);
   const setSelectedNode = useStore((s) => s.setSelectedNode);
   const pushToast = useStore((s) => s.pushToast);
+  const aiPanelDraft = useStore((s) => s.aiPanelDraft);
+  const setAiPanelDraft = useStore((s) => s.setAiPanelDraft);
 
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const repo = repositories.find((r) => r.id === activeRepoId);
+
+  useEffect(() => {
+    if (aiPanelDraft) {
+      setInput(aiPanelDraft);
+      setAiPanelDraft(null);
+    }
+  }, [aiPanelDraft, setAiPanelDraft]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [chatMessages, loading]);
 
   if (!bottomPanelOpen) return null;
 
@@ -62,6 +75,18 @@ export function AIPanel() {
             const prev = useStore.getState().chatMessages.find((m) => m.id === aid);
             updateChatMessage(aid, { content: (prev?.content ?? '') + ev.token });
           }
+          if (ev.type === 'validated') {
+            const paths = ev.validation?.paths ?? {};
+            const rules = ev.validation?.rules ?? {};
+            const prev = useStore.getState().chatMessages.find((m) => m.id === aid);
+            const related = (prev?.relatedFiles ?? []).filter((f) => paths[f.path] !== false);
+            updateChatMessage(aid, {
+              content: ev.content ?? prev?.content ?? '',
+              relatedFiles: related,
+              pathValidation: paths,
+              ruleValidation: rules,
+            });
+          }
         },
       );
     } catch (e) {
@@ -74,14 +99,17 @@ export function AIPanel() {
   };
 
   return (
-    <div className="bottom-panel" style={{ height: bottomPanelHeight }}>
+    <aside className="ai-panel" aria-label="Architecture assistant">
       <div
-        className="bottom-panel__resize"
+        className="ai-panel__resize"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize assistant panel"
         onMouseDown={(e) => {
-          const startY = e.clientY;
-          const startH = bottomPanelHeight;
+          const startX = e.clientX;
+          const startW = useStore.getState().aiPanelWidth;
           const onMove = (ev: MouseEvent) => {
-            setBottomPanelHeight(Math.min(480, Math.max(120, startH + (startY - ev.clientY))));
+            setAiPanelWidth(startW + (startX - ev.clientX));
           };
           const onUp = () => {
             window.removeEventListener('mousemove', onMove);
@@ -91,70 +119,90 @@ export function AIPanel() {
           window.addEventListener('mouseup', onUp);
         }}
       />
-      <div className="bottom-panel__header">
-        <span>
-          <i className="codicon codicon-sparkle" /> Architecture Assistant
+      <header className="ai-panel__header">
+        <span className="ai-panel__title">
+          <i className="codicon codicon-sparkle" aria-hidden /> Assistant
         </span>
-        <button type="button" className="btn-icon" onClick={toggleBottomPanel} aria-label="Close panel">
+        <button type="button" className="btn-icon" onClick={toggleBottomPanel} aria-label="Close assistant">
           <i className="codicon codicon-close" />
         </button>
-      </div>
+      </header>
       <div className="ai-grounding">
-        ● Grounded in: {repo?.name ?? '—'} · Scope: {graphPrefix || 'root'}
-        {selectedNodePath ? ` · ${selectedNodePath}` : ''}
+        <span className="ai-grounding__dot" aria-hidden />
+        <span className="ai-grounding__text">
+          {repo?.name ?? '—'} · {graphPrefix || 'root'}
+          {selectedNodePath ? ` · ${selectedNodePath}` : ''}
+        </span>
       </div>
       <div className="ai-messages">
-        {chatMessages.map((msg) =>
-          msg.role === 'user' ? (
-            <div key={msg.id} className="ai-msg-user">
-              <div className="ai-msg-user__bubble">{msg.content}</div>
+        {chatMessages.length === 0 ? (
+          <div className="ai-panel__empty">
+            <p className="ai-panel__empty-title">Ask about architecture</p>
+            <p className="ai-panel__empty-desc">
+              Grounded answers use your indexed graph, ownership, and risk signals.
+            </p>
+            <div className="prompt-chips">
+              {PROMPTS.map((p) => (
+                <button key={p} type="button" className="prompt-chip" onClick={() => void send(p)}>
+                  {p}
+                </button>
+              ))}
             </div>
-          ) : (
-            <div key={msg.id} className="ai-msg-assistant">
-              {msg.content}
-              {msg.relatedFiles.length > 0 ? (
-                <div style={{ marginTop: 8 }}>
-                  {msg.relatedFiles.map((f) => (
-                    <NodeCitation
-                      key={f.path}
-                      path={f.path}
-                      fileId={String(f.fileId)}
-                      onSelect={setSelectedNode}
-                    />
-                  ))}
+          </div>
+        ) : (
+          <>
+            {chatMessages.map((msg) =>
+              msg.role === 'user' ? (
+                <div key={msg.id} className="ai-msg-user">
+                  <div className="ai-msg-user__bubble">{msg.content}</div>
                 </div>
-              ) : null}
-            </div>
-          ),
+              ) : (
+                <AssistantMessage
+                  key={msg.id}
+                  content={msg.content}
+                  relatedFiles={msg.relatedFiles}
+                  pathValidation={msg.pathValidation}
+                  onSelectFile={setSelectedNode}
+                />
+              ),
+            )}
+            {loading ? (
+              <div className="ai-msg-assistant ai-msg-assistant--typing">
+                <span className="ai-typing-dot" />
+                <span className="ai-typing-dot" />
+                <span className="ai-typing-dot" />
+              </div>
+            ) : null}
+            <div ref={messagesEndRef} />
+          </>
         )}
       </div>
-      {chatMessages.length === 0 ? (
-        <div className="prompt-chips">
-          {PROMPTS.map((p) => (
-            <button key={p} type="button" className="prompt-chip" onClick={() => void send(p)}>
-              {p}
-            </button>
-          ))}
+      <footer className="ai-input-footer">
+        <div className="ai-input-row">
+          <textarea
+            className="ai-input"
+            rows={2}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Ask about architecture, ownership, risk, or impact…"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                void send(input);
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="ai-input-send"
+            disabled={loading || !input.trim()}
+            onClick={() => void send(input)}
+            aria-label="Send message"
+          >
+            <i className="codicon codicon-arrow-up" />
+          </button>
         </div>
-      ) : null}
-      <div className="ai-input-row">
-        <textarea
-          className="ai-input"
-          rows={1}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask about architecture, ownership, risk, or impact…"
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              void send(input);
-            }
-          }}
-        />
-        <button type="button" className="title-bar__btn" disabled={loading} onClick={() => void send(input)}>
-          ↵
-        </button>
-      </div>
-    </div>
+      </footer>
+    </aside>
   );
 }

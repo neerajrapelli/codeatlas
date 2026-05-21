@@ -6,11 +6,9 @@ import (
 	"net/http"
 
 	"codeatlas/apps/api/internal/auth"
-	"github.com/jackc/pgx/v5"
+	"codeatlas/apps/api/internal/tenant"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-var errRepositoryForbidden = errors.New("repository access denied")
 
 // AuthorizeRepository ensures the caller's JWT tenant may access the repository.
 // When auth is disabled (no claims in context), access is allowed.
@@ -19,17 +17,11 @@ func AuthorizeRepository(ctx context.Context, pool *pgxpool.Pool, repositoryID i
 	if !ok || claims == nil {
 		return nil
 	}
-	tenant := normalizeTenantID(claims.TenantID)
-	var repoTenant string
-	err := pool.QueryRow(ctx, `SELECT COALESCE(tenant_id, '') FROM repositories WHERE id = $1`, repositoryID).Scan(&repoTenant)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errRepositoryForbidden
+	if err := tenant.RepositoryBelongsToTenant(ctx, pool, repositoryID, claims.TenantID); err != nil {
+		if errors.Is(err, tenant.ErrForbidden) {
+			return tenant.ErrForbidden
 		}
 		return err
-	}
-	if normalizeTenantID(repoTenant) != tenant {
-		return errRepositoryForbidden
 	}
 	return nil
 }
@@ -39,24 +31,13 @@ func writeForbidden(w http.ResponseWriter) {
 }
 
 func tenantFromRequest(ctx context.Context) string {
-	claims, ok := auth.FromContext(ctx)
-	if !ok || claims == nil {
-		return ""
-	}
-	return normalizeTenantID(claims.TenantID)
-}
-
-func normalizeTenantID(raw string) string {
-	if raw == "" {
-		return "default"
-	}
-	return raw
+	return tenant.FromContext(ctx)
 }
 
 // guardRepository writes 403/404 and returns false when access is denied.
 func guardRepository(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, repositoryID int64) bool {
 	if err := AuthorizeRepository(r.Context(), pool, repositoryID); err != nil {
-		if errors.Is(err, errRepositoryForbidden) {
+		if errors.Is(err, tenant.ErrForbidden) {
 			writeForbidden(w)
 			return false
 		}

@@ -3,9 +3,12 @@ package httpserver
 import (
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"codeatlas/apps/api/internal/auth"
 )
 
 type tokenBucket struct {
@@ -83,13 +86,22 @@ func withRateLimit(rl RequestLimiter, path string, capacity, perMinute int, next
 			next.ServeHTTP(w, r)
 			return
 		}
-		key := clientIP(r) + ":" + path
+		key := rateLimitKey(r, path)
 		if !rl.Allow(key, capacity, perMinute) {
+			w.Header().Set("Retry-After", strconv.Itoa(60))
 			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate limit exceeded"})
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// rateLimitKey scopes limits per tenant when JWT claims are present, else per client IP.
+func rateLimitKey(r *http.Request, path string) string {
+	if claims, ok := auth.FromContext(r.Context()); ok && strings.TrimSpace(claims.TenantID) != "" {
+		return "tenant:" + claims.TenantID + ":" + path
+	}
+	return "ip:" + clientIP(r) + ":" + path
 }
 
 func rateLimitMatches(prefix, path, method string) bool {

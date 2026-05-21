@@ -1,6 +1,7 @@
 package ingestprogress
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -80,6 +81,16 @@ func (b *Broadcaster) Delete(repositoryID int64) {
 	b.mu.Lock()
 	delete(b.m, repositoryID)
 	b.mu.Unlock()
+}
+
+func (b *Broadcaster) Latest(repositoryID int64) (StreamEvent, bool) {
+	return b.Get(repositoryID)
+}
+
+func (b *Broadcaster) Subscribe(ctx context.Context, repositoryID int64) (<-chan StreamEvent, func(), error) {
+	_ = ctx
+	_ = repositoryID
+	return nil, func() {}, nil
 }
 
 // DefaultSteps returns the canonical step list (all pending).
@@ -252,6 +263,40 @@ func indexOf(slice []string, v string) int {
 		}
 	}
 	return -1
+}
+
+// StepToRepoStage maps SSE step names back to repository status strings for API/UI.
+func StepToRepoStage(step string) string {
+	switch step {
+	case StepCloneRepository:
+		return "cloning"
+	case StepExtractWorkspace:
+		return "extracting"
+	case StepIndexWorkspace:
+		return "indexing"
+	case StepParseSources:
+		return "parsing"
+	case StepBuildDependencyGraph:
+		return "building_graph"
+	case StepSemanticEmbeddings:
+		return "generating_embeddings"
+	default:
+		return ""
+	}
+}
+
+// CurrentStepForProgress maps DB stage + overall percent to the active UI step.
+func CurrentStepForProgress(repoStage string, percent float64, embeddingsEnabled bool) string {
+	if repoStage == "parsing" {
+		threshold := 50.0
+		if embeddingsEnabled {
+			threshold = 100.0 / 3.0
+		}
+		if percent >= threshold {
+			return StepBuildDependencyGraph
+		}
+	}
+	return RepoStatusToCurrentStep(repoStage)
 }
 
 // RepoStatusToCurrentStep maps repository ingest status to SSE step name.

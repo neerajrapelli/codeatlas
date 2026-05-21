@@ -8,6 +8,26 @@ const STEPS = [
   { key: 'generating_embeddings', label: 'Semantic embeddings' },
 ];
 
+/** Map SSE step ids and legacy status strings to STEPS keys. */
+function normalizeStage(stage: string): string {
+  switch (stage) {
+    case 'clone_repository':
+      return 'cloning';
+    case 'extract_workspace':
+      return 'extracting';
+    case 'index_workspace':
+      return 'indexing';
+    case 'parse_sources':
+      return 'parsing';
+    case 'build_dependency_graph':
+      return 'building_graph';
+    case 'semantic_embeddings':
+      return 'generating_embeddings';
+    default:
+      return stage;
+  }
+}
+
 export function ProgressPopover() {
   const open = useStore((s) => s.progressPopoverOpen);
   const setOpen = useStore((s) => s.setProgressPopoverOpen);
@@ -18,8 +38,12 @@ export function ProgressPopover() {
   if (!open) return null;
 
   const repo = repositories.find((r) => r.id === activeRepoId);
-  const stage = ingestionStatus?.codeIndex.stage ?? repo?.status ?? '';
-  const pct = Math.round(ingestionStatus?.codeIndex.progressPercent ?? 0);
+  const stage = normalizeStage(ingestionStatus?.codeIndex.stage ?? repo?.status ?? '');
+  const pct = Math.round(
+    repo?.status === 'ready'
+      ? 100
+      : (ingestionStatus?.codeIndex.progressPercent ?? repo?.progressPercent ?? 0),
+  );
 
   return (
     <>
@@ -36,7 +60,7 @@ export function ProgressPopover() {
             stage === 'ready' ||
             (step.key !== stage &&
               STEPS.findIndex((s) => s.key === stage) > STEPS.findIndex((s) => s.key === step.key));
-          const active = stage === step.key || stage.includes(step.key);
+          const active = stage === step.key;
           return (
             <div key={step.key} style={{ marginBottom: 4 }}>
               {done ? '✓' : active ? '▶' : '○'} {step.label}

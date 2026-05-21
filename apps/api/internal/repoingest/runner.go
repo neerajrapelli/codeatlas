@@ -11,6 +11,8 @@ import (
 	"codeatlas/apps/api/internal/indexer"
 	"codeatlas/apps/api/internal/ingestprogress"
 	"codeatlas/apps/api/internal/jobqueue"
+
+	"github.com/google/uuid"
 )
 
 // Runner executes queued ingestion jobs.
@@ -41,13 +43,16 @@ func (r *Runner) RunJob(ctx context.Context, job *jobqueue.Job) error {
 }
 
 type jobMetadata struct {
-	SourceType   SourceType `json:"sourceType"`
-	SourceURL    string     `json:"sourceUrl"`
-	Branch       string     `json:"branch"`
-	DisplayName  string     `json:"displayName"`
-	ZIPPath      string     `json:"zipPath,omitempty"`
-	Reindex      bool       `json:"reindex,omitempty"`
-	SkipPrepare  bool       `json:"skipPrepare,omitempty"`
+	SourceType           SourceType `json:"sourceType"`
+	SourceURL            string     `json:"sourceUrl"`
+	Branch               string     `json:"branch"`
+	DisplayName          string     `json:"displayName"`
+	ZIPPath              string     `json:"zipPath,omitempty"`
+	ProviderTokenID      string     `json:"providerTokenId,omitempty"`
+	TenantID             string     `json:"tenantId,omitempty"`
+	UserSubject          string     `json:"userSubject,omitempty"`
+	Reindex              bool       `json:"reindex,omitempty"`
+	SkipPrepare          bool       `json:"skipPrepare,omitempty"`
 }
 
 func decodeJobMetadata(raw map[string]any) jobMetadata {
@@ -67,6 +72,16 @@ func (s *Service) runIngestJob(ctx context.Context, job *jobqueue.Job, repo Repo
 		Branch:      meta.Branch,
 		DisplayName: meta.DisplayName,
 		ZIPPath:     meta.ZIPPath,
+		TenantID:    meta.TenantID,
+		UserSubject: meta.UserSubject,
+	}
+	if meta.TenantID == "" {
+		req.TenantID = repo.TenantID
+	}
+	if meta.ProviderTokenID != "" {
+		if id, err := uuid.Parse(meta.ProviderTokenID); err == nil {
+			req.ProviderTokenID = &id
+		}
 	}
 	src, ok := s.sources[req.SourceType]
 	if !ok {
@@ -152,22 +167,21 @@ func (s *Service) executeIngestion(
 	durations.Start(parseStep)
 
 	lastProgress := time.Now()
+	var lastStage Status
 	report := func(evt indexer.ProgressEvent) {
 		now := time.Now()
-		if now.Sub(lastProgress) < 500*time.Millisecond && evt.Progress < 100 {
-			return
-		}
-		lastProgress = now
 		stage := Status(evt.Stage)
 		if stage == "" {
 			stage = StatusParsing
 		}
-		progress := 20 + evt.Progress*0.75
-		if stage == StatusGeneratingEmbeddings {
-			if evt.Progress > 100 {
-				progress = 85
-			}
+		stageChanged := stage != lastStage
+		if now.Sub(lastProgress) < 500*time.Millisecond && evt.Progress < 100 &&
+			stage != StatusGeneratingEmbeddings && stage != StatusBuildingGraph && !stageChanged {
+			return
 		}
+		lastProgress = now
+		lastStage = stage
+		progress := mapIndexerProgress(stage, evt, s.embeddingsEnabled)
 		_ = s.store.UpdateProgress(ctx, repo.ID, ProgressUpdate{
 			Stage:             stage,
 			ProgressPercent:   progress,
@@ -183,10 +197,16 @@ func (s *Service) executeIngestion(
 	if err := s.store.UpdateStatus(ctx, repo.ID, StatusParsing, ""); err != nil {
 		return err
 	}
+	if !s.embeddingsEnabled {
+		durations.Complete(ingestprogress.StepSemanticEmbeddings)
+	}
 
 	res, err := s.indexer.Run(ctx, indexer.Request{
+		RepositoryID:   repo.ID,
 		RepositoryPath: repo.WorkspacePath,
 		RepositoryName: repo.Name,
+		TenantID:       repo.TenantID,
+		ParseWorkers:   s.parseWorkers,
 		OnProgress:     report,
 	})
 	durations.Complete(parseStep)
@@ -212,7 +232,12 @@ func (s *Service) executeIngestion(
 		return err
 	}
 	s.publishComplete(ctx, job, repo.ID, durations, res.Files, res.Symbols, res.FileDependencies)
-	s.logger.Info("repository_ingestion_ready", "repository_id", repo.ID, "job_id", job.ID)
+	s.logger.Info("repository_ingestion_ready",
+		"repository_id", repo.ID,
+		"job_id", job.ID,
+		"embeddings", res.Embeddings,
+		"embeddings_skipped", res.EmbeddingsSkipped,
+	)
 	s.runSocioEnrichment(repo.ID)
 	s.syncCodeowners(context.Background(), repo)
 	s.runDriftValidation(repo.ID)
@@ -260,7 +285,7 @@ func (s *Service) publishJobProgress(
 	files, symbols, edges int,
 	durations *ingestprogress.StepDurations,
 ) {
-	current := ingestprogress.RepoStatusToCurrentStep(string(repoStatus))
+	current := ingestprogress.CurrentStepForProgress(string(repoStatus), pct, s.embeddingsEnabled)
 	if repoStatus == StatusParsing && pct < 28 {
 		current = ingestprogress.StepIndexWorkspace
 	}
@@ -281,8 +306,8 @@ func (s *Service) publishJobProgress(
 	if repoStatus == StatusFailed {
 		ev.Status = ingestprogress.StatusFailed
 	}
-	if s.broadcaster != nil {
-		s.broadcaster.Publish(repoID, ev)
+	if s.progressBus != nil {
+		s.progressBus.Publish(repoID, ev)
 	}
 	if s.queue != nil && job != nil {
 		_ = s.queue.UpdateProgress(ctx, job.ID, ev)
@@ -292,8 +317,8 @@ func (s *Service) publishJobProgress(
 func (s *Service) publishComplete(ctx context.Context, job *jobqueue.Job, repoID int64, d *ingestprogress.StepDurations, files, symbols, edges int) {
 	ev := ingestprogress.BuildEvent(1, string(StatusReady), ingestprogress.StepSemanticEmbeddings, files, files, 100, d.Snapshot())
 	ev.Status = ingestprogress.StatusComplete
-	if s.broadcaster != nil {
-		s.broadcaster.Publish(repoID, ev)
+	if s.progressBus != nil {
+		s.progressBus.Publish(repoID, ev)
 	}
 	if s.queue != nil && job != nil {
 		_ = s.queue.UpdateProgress(ctx, job.ID, ev)
@@ -303,8 +328,8 @@ func (s *Service) publishComplete(ctx context.Context, job *jobqueue.Job, repoID
 func (s *Service) publishFailed(ctx context.Context, job *jobqueue.Job, repoID int64, step string, d *ingestprogress.StepDurations, msg string) {
 	ev := ingestprogress.BuildEvent(1, string(StatusFailed), step, 0, 0, 0, d.Snapshot())
 	ev.Status = ingestprogress.StatusFailed
-	if s.broadcaster != nil {
-		s.broadcaster.Publish(repoID, ev)
+	if s.progressBus != nil {
+		s.progressBus.Publish(repoID, ev)
 	}
 	if s.queue != nil && job != nil {
 		_ = s.queue.UpdateProgress(ctx, job.ID, ev)

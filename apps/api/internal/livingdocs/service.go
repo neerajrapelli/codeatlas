@@ -21,7 +21,7 @@ func (s *Service) C4Diagram(ctx context.Context, repositoryID int64, level strin
 	if level == "" {
 		level = "container"
 	}
-	layer, err := graphhierarchy.BuildLayer(ctx, s.pool, repositoryID, "")
+	layer, err := graphhierarchy.BuildLayer(ctx, s.pool, repositoryID, "", "", 0)
 	if err != nil {
 		return "", err
 	}

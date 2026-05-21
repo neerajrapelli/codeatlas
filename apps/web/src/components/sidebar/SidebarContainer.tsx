@@ -1,5 +1,5 @@
 import { useStore } from '../../store';
-import { OnboardingPanel } from '../OnboardingPanel';
+import { OnboardingPanel } from './OnboardingPanel';
 import { DocsView } from './DocsView';
 import { DriftView } from './DriftView';
 import { McpView } from './McpView';

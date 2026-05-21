@@ -1,169 +1,40 @@
-import ELK from 'elkjs/lib/elk.bundled.js';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { MouseEvent } from 'react';
-import ReactFlow, {
-  Background,
-  Controls,
-  MarkerType,
-  MiniMap,
-  useReactFlow,
-  type Edge,
-  type Node,
-  type NodeProps,
-} from 'reactflow';
+import 'reactflow/dist/style.css';
 
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { MouseEvent } from 'react';
+import { useReactFlow, type Edge, type Node, type NodeProps } from 'reactflow';
+
+import { useClusterLayerQuery } from '../../hooks/queries/useClusterLayer';
 import { useIngestionProgress } from '../../hooks/useIngestionProgress';
+import { layoutClusterLayer } from '../../lib/graphLayout';
 import { api } from '../../lib/api';
 import { useStore } from '../../store';
-import type { ClusterLayer, FileOverlay } from '../../types';
 import { IngestionBar } from '../shell/IngestionBar';
+import { GraphErrorBoundary } from './GraphErrorBoundary';
 import { GraphFileNode } from './GraphFileNode';
 import { GraphNodeContextMenu } from './GraphNodeContextMenu';
-import { GraphSkeleton } from './GraphSkeleton';
+import { GraphLayoutOverlay, GraphSkeleton } from './GraphSkeleton';
 import { GraphToolbar } from './GraphToolbar';
 import { GraphWelcome } from './GraphWelcome';
-
-const elk = new ELK();
+import { GraphRendererView } from './renderer';
 
 const ClusterNode = ({ data }: NodeProps) => (
-  <div
-    style={{
-      width: 200,
-      height: 56,
-      background: 'var(--bg-3)',
-      border: '1px solid var(--border-subtle)',
-      borderRadius: 'var(--radius-md)',
-      padding: 8,
-      fontSize: 'var(--font-size-sm)',
-    }}
-  >
-    <div style={{ fontWeight: 600 }}>{String(data.label)}</div>
-    <div style={{ color: 'var(--text-secondary)', fontSize: 'var(--font-size-xs)' }}>
-      {String(data.fileCount)} files
-    </div>
+  <div className="graph-cluster-node">
+    <div className="graph-cluster-node__label">{String(data.label)}</div>
+    <div className="graph-cluster-node__meta">{String(data.fileCount)} files</div>
   </div>
 );
 
 const nodeTypes = { cluster: ClusterNode, graphFile: GraphFileNode };
 
-function normalizeLayer(raw: ClusterLayer): ClusterLayer {
-  return {
-    prefix: raw.prefix ?? '',
-    clusters: raw.clusters ?? [],
-    files: raw.files ?? [],
-    edges: raw.edges ?? [],
-    socioOverlay: raw.socioOverlay,
-  };
-}
-
-async function layoutLayer(
-  layer: ClusterLayer,
-  overlays: Record<string, FileOverlay>,
-  highlighted: Set<string>,
-  selectedId: string | null,
-  blast: {
-    active: boolean;
-    targetPath: string | null;
-    depthByPath: Record<string, number>;
-  },
-  violationSeverity: Record<string, 'error' | 'warning' | 'info'>,
-): Promise<{ nodes: Node[]; edges: Edge[] }> {
-  const rfNodes: Node[] = [];
-  const children: Array<{ id: string; width: number; height: number }> = [];
-
-  for (const c of layer.clusters) {
-    children.push({ id: c.id, width: 200, height: 56 });
-    rfNodes.push({
-      id: c.id,
-      type: 'cluster',
-      position: { x: 0, y: 0 },
-      data: { label: c.label, fileCount: c.fileCount, pathPrefix: c.pathPrefix },
-    });
-  }
-
-  for (const f of layer.files) {
-    const nid = `f:${f.id}`;
-    const ov = overlays[f.id];
-    const isTarget = blast.active && blast.targetPath === f.path;
-    const blastDepth = blast.depthByPath[f.path];
-    const inBlast =
-      blast.active &&
-      (isTarget || blastDepth != null);
-    const dim = blast.active && !inBlast;
-    const viol = violationSeverity[f.path];
-    children.push({ id: nid, width: 180, height: 52 });
-    rfNodes.push({
-      id: nid,
-      type: 'graphFile',
-      position: { x: 0, y: 0 },
-      data: {
-        path: f.path,
-        symbolCount: f.symbolCount,
-        isHotspot: ov?.isHotspot,
-        hasBusFactorRisk: ov?.hasBusFactorRisk,
-        architectureSignals: ov?.architectureSignalCount ?? 0,
-        dominantOwnerLogin: ov?.dominantOwnerLogin,
-        highlight: highlighted.has(f.id),
-        dim,
-        blastDepth: blastDepth ?? (isTarget ? 0 : undefined),
-        blastTarget: isTarget,
-        violationSeverity: viol,
-      },
-      selected: selectedId === f.id,
-    });
-  }
-
-  const elkEdges = (layer.edges ?? []).map((e, i) => ({
-    id: `e-${String(i)}`,
-    sources: [e.from],
-    targets: [e.to],
-  }));
-
-  const graph = {
-    id: 'root',
-    layoutOptions: {
-      'elk.algorithm': 'layered',
-      'elk.direction': 'RIGHT',
-      'elk.spacing.nodeNode': '72',
-    },
-    children,
-    edges: elkEdges,
-  };
-
-  const laid = await elk.layout(graph);
-  for (const ch of laid.children ?? []) {
-    if (ch.x != null && ch.y != null) {
-      const n = rfNodes.find((x) => x.id === ch.id);
-      if (n) n.position = { x: ch.x, y: ch.y };
-    }
-  }
-
-  const edges: Edge[] = [];
-  const selNid = selectedId ? `f:${selectedId}` : null;
-  for (let i = 0; i < (layer.edges ?? []).length; i += 1) {
-    const e = layer.edges[i];
-    if (!e) continue;
-    const outDep = selNid && e.from === selNid;
-    const inDep = selNid && e.to === selNid;
-    const hi = outDep || inDep;
-    edges.push({
-      id: `edge-${String(i)}`,
-      source: e.from,
-      target: e.to,
-      style: {
-        stroke: outDep ? 'var(--accent-blue)' : inDep ? 'var(--color-warning)' : '#333',
-        strokeWidth: hi ? 1.5 : 1,
-        strokeDasharray: undefined,
-      },
-      markerEnd: { type: MarkerType.ArrowClosed, color: hi ? 'var(--accent-blue)' : '#555' },
-    });
-  }
-
-  return { nodes: rfNodes, edges };
-}
+const LAYOUT_TIMEOUT_MS = 35_000;
 
 export function GraphCanvas() {
-  const reactFlow = useReactFlow();
+  const { fitView } = useReactFlow();
+  const fitViewRef = useRef(fitView);
+  fitViewRef.current = fitView;
+  const layoutGenRef = useRef(0);
+
   const activeRepoId = useStore((s) => s.activeRepoId);
   const graphPrefix = useStore((s) => s.graphPrefix);
   const setGraphPrefix = useStore((s) => s.setGraphPrefix);
@@ -171,17 +42,19 @@ export function GraphCanvas() {
   const selectedNodeId = useStore((s) => s.selectedNodeId);
   const setSelectedNode = useStore((s) => s.setSelectedNode);
   const highlightedFileIds = useStore((s) => s.highlightedFileIds);
+  const graphHoverFileId = useStore((s) => s.graphHoverFileId);
   const blastRadius = useStore((s) => s.blastRadius);
   const blastDepthByPath = useStore((s) => s.blastDepthByPath);
   const blastTargetPath = useStore((s) => s.blastTargetPath);
   const setBlastRadius = useStore((s) => s.setBlastRadius);
   const repositories = useStore((s) => s.repositories);
-  const graphLoading = useStore((s) => s.graphLoading);
   const setGraphLoading = useStore((s) => s.setGraphLoading);
 
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [layoutPending, setLayoutPending] = useState(false);
+  const [layoutError, setLayoutError] = useState<string | null>(null);
+  const [graphEpoch, setGraphEpoch] = useState(0);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -189,12 +62,20 @@ export function GraphCanvas() {
   } | null>(null);
   const [blastLoading, setBlastLoading] = useState(false);
 
+  const {
+    data: layer,
+    error: fetchError,
+    isLoading: layerLoading,
+    isFetching,
+    refetch,
+  } = useClusterLayerQuery(activeRepoId, graphPrefix, activeRepoId != null);
+
   const ruleViolations = useStore((s) => s.ruleViolations);
   const violationSeverity = useMemo(() => {
     const m: Record<string, 'error' | 'warning' | 'info'> = {};
     for (const v of ruleViolations) {
       const cur = m[v.sourceFile];
-      if (!cur || (v.severity === 'error') || (v.severity === 'warning' && cur === 'info')) {
+      if (!cur || v.severity === 'error' || (v.severity === 'warning' && cur === 'info')) {
         m[v.sourceFile] = v.severity;
       }
       const curT = m[v.targetFile];
@@ -205,11 +86,14 @@ export function GraphCanvas() {
     return m;
   }, [ruleViolations]);
 
-  const blastOverlay = {
-    active: blastRadius != null,
-    targetPath: blastTargetPath,
-    depthByPath: blastDepthByPath,
-  };
+  const blastOverlay = useMemo(
+    () => ({
+      active: blastRadius != null,
+      targetPath: blastTargetPath,
+      depthByPath: blastDepthByPath,
+    }),
+    [blastRadius, blastTargetPath, blastDepthByPath],
+  );
 
   const repo = repositories.find((r) => r.id === activeRepoId);
   const { progress, fading } = useIngestionProgress(activeRepoId);
@@ -217,69 +101,97 @@ export function GraphCanvas() {
     progress?.status === 'running' ||
     progress?.status === 'queued' ||
     (repo != null && repo.status !== 'ready' && repo.status !== 'failed');
-  const showSkeleton =
-    graphLoading || !repo || (activelyIndexing && (repo?.filesIndexed ?? 0) === 0);
+
+  const layerHasContent = (layer?.files?.length ?? 0) + (layer?.clusters?.length ?? 0) > 0;
+  const showFullSkeleton =
+    layerLoading ||
+    (isFetching && !layer) ||
+    (activelyIndexing && !layerHasContent && (repo?.filesIndexed ?? 0) === 0);
 
   useEffect(() => {
-    if (activeRepoId == null) {
+    setGraphLoading(isFetching && activeRepoId != null);
+  }, [isFetching, activeRepoId, setGraphLoading]);
+
+  useEffect(() => {
+    if (layer) setClusterLayer(layer);
+  }, [layer, setClusterLayer]);
+
+  useEffect(() => {
+    if (!layer || activeRepoId == null) {
       setNodes([]);
       setEdges([]);
+      setLayoutPending(false);
+      setLayoutError(null);
       return;
     }
-    const ac = new AbortController();
-    setGraphLoading(true);
-    void (async () => {
-      try {
-        const layer = normalizeLayer(await api.getClusters(activeRepoId, graphPrefix));
-        if (ac.signal.aborted) return;
-        setClusterLayer(layer);
-        const overlays = layer.socioOverlay?.fileOverlays ?? {};
-        const laid = await layoutLayer(
-          layer,
-          overlays,
-          highlightedFileIds,
-          selectedNodeId,
-          blastOverlay,
-          violationSeverity,
-        );
-        if (ac.signal.aborted) return;
-        setNodes(laid.nodes);
-        setEdges(laid.edges);
-        setError(null);
-        requestAnimationFrame(() => reactFlow.fitView({ padding: 0.12, duration: 300 }));
-      } catch (e) {
-        if ((e as Error).name === 'AbortError') return;
-        setError(e instanceof Error ? e.message : 'Failed to load graph');
-      } finally {
-        if (!ac.signal.aborted) setGraphLoading(false);
-      }
-    })();
-    return () => ac.abort();
-  }, [activeRepoId, graphPrefix, setClusterLayer, setGraphLoading, reactFlow]);
 
-  useEffect(() => {
-    const layer = useStore.getState().clusterLayer;
-    if (!layer || activeRepoId == null) return;
+    const fileCount = layer.files?.length ?? 0;
+    const clusterCount = layer.clusters?.length ?? 0;
+    if (fileCount === 0 && clusterCount === 0) {
+      setNodes([]);
+      setEdges([]);
+      setLayoutPending(false);
+      setLayoutError(null);
+      return;
+    }
+
+    const gen = ++layoutGenRef.current;
+    setLayoutPending(true);
+    setLayoutError(null);
     const overlays = layer.socioOverlay?.fileOverlays ?? {};
-    void layoutLayer(
+
+    const timeoutId = window.setTimeout(() => {
+      if (layoutGenRef.current !== gen) return;
+      setLayoutPending(false);
+      setLayoutError('Layout computation timed out. Click Retry or drill into a smaller folder.');
+    }, LAYOUT_TIMEOUT_MS);
+
+    void layoutClusterLayer(
       layer,
       overlays,
       highlightedFileIds,
+      graphHoverFileId,
       selectedNodeId,
       blastOverlay,
       violationSeverity,
-    ).then((laid) => {
-      setNodes(laid.nodes);
-      setEdges(laid.edges);
-    });
+    )
+      .then((laid) => {
+        if (layoutGenRef.current !== gen) return;
+        window.clearTimeout(timeoutId);
+        setNodes(laid.nodes);
+        setEdges(laid.edges);
+        setLayoutError(null);
+        setLayoutPending(false);
+        requestAnimationFrame(() => {
+          try {
+            fitViewRef.current({ padding: 0.12, duration: 300 });
+          } catch {
+            /* fitView can fail if canvas unmounted */
+          }
+        });
+      })
+      .catch((e) => {
+        if (layoutGenRef.current !== gen) return;
+        window.clearTimeout(timeoutId);
+        setLayoutError(e instanceof Error ? e.message : 'Layout failed');
+        setNodes([]);
+        setEdges([]);
+        setLayoutPending(false);
+      });
+
+    return () => {
+      layoutGenRef.current += 1;
+      window.clearTimeout(timeoutId);
+    };
   }, [
+    layer,
     highlightedFileIds,
+    graphHoverFileId,
     selectedNodeId,
-    activeRepoId,
-    blastRadius,
-    blastDepthByPath,
-    blastTargetPath,
+    blastOverlay,
     violationSeverity,
+    activeRepoId,
+    graphEpoch,
   ]);
 
   useEffect(() => {
@@ -296,7 +208,7 @@ export function GraphCanvas() {
         const result = await api.getBlastRadius(activeRepoId, filePath, { depth: 3 });
         setBlastRadius(result);
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Blast radius failed');
+        setLayoutError(e instanceof Error ? e.message : 'Blast radius failed');
       } finally {
         setBlastLoading(false);
       }
@@ -328,6 +240,18 @@ export function GraphCanvas() {
     [setGraphPrefix, setSelectedNode],
   );
 
+  const displayError =
+    fetchError instanceof Error ? fetchError.message : fetchError ? String(fetchError) : layoutError;
+
+  const layerSettled = !layerLoading && !isFetching;
+  const showNoGraphData =
+    !showFullSkeleton &&
+    !layoutPending &&
+    !displayError &&
+    layerSettled &&
+    activeRepoId != null &&
+    (layer == null || !layerHasContent || nodes.length === 0);
+
   if (activeRepoId == null) {
     return (
       <div className="graph-area">
@@ -338,37 +262,59 @@ export function GraphCanvas() {
 
   return (
     <div className="graph-area">
-      <IngestionBar progress={progress} fading={fading} repoName={repo?.name} />
-      {showSkeleton ? (
-        <GraphSkeleton />
+      <IngestionBar
+        progress={progress}
+        fading={fading}
+        repoName={repo?.name}
+        repoReady={repo?.status === 'ready'}
+      />
+      {showFullSkeleton ? (
+        <GraphSkeleton
+          message={
+            activelyIndexing && !layerHasContent
+              ? 'Indexing repository…'
+              : 'Loading architecture map…'
+          }
+        />
       ) : (
-        <>
+        <GraphErrorBoundary
+          onReset={() => {
+            setGraphEpoch((n) => n + 1);
+            void refetch();
+          }}
+        >
           <GraphToolbar />
-          <div className="graph-canvas" style={{ flex: 1, minHeight: 0 }}>
-            {error ? <p className="empty-state" style={{ padding: 12 }}>{error}</p> : null}
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
-              nodeTypes={nodeTypes}
-              onNodeClick={onNodeClick}
-              onNodeContextMenu={onNodeContextMenu}
-              fitView
-              minZoom={0.1}
-              maxZoom={2}
-              proOptions={{ hideAttribution: true }}
-              onPaneClick={() => {
-                setSelectedNode(null, null);
-                setContextMenu(null);
-              }}
-            >
-              <MiniMap
-                nodeColor={() => 'var(--border-default)'}
-                maskColor="var(--minimap-mask)"
-                style={{ background: 'var(--bg-1)' }}
+          <div className="graph-canvas">
+            {displayError ? (
+              <div className="graph-canvas__error">
+                <p>{displayError}</p>
+                <button type="button" className="btn-primary" onClick={() => void refetch()}>
+                  Retry load
+                </button>
+              </div>
+            ) : showNoGraphData ? (
+              <div className="graph-canvas__empty">
+                <p>No graph data available for this repository.</p>
+                <p className="muted">
+                  {activelyIndexing
+                    ? 'Indexing is still in progress — check back shortly.'
+                    : 'Try another folder prefix or re-index if ingestion failed.'}
+                </p>
+              </div>
+            ) : (
+              <GraphRendererView
+                nodes={nodes}
+                edges={edges}
+                nodeTypes={nodeTypes}
+                onNodeClick={onNodeClick}
+                onNodeContextMenu={onNodeContextMenu}
+                onPaneClick={() => {
+                  setSelectedNode(null, null);
+                  setContextMenu(null);
+                }}
               />
-              <Controls />
-              <Background gap={24} size={1} color="var(--graph-dot)" />
-            </ReactFlow>
+            )}
+            {layoutPending ? <GraphLayoutOverlay /> : null}
           </div>
           {contextMenu ? (
             <GraphNodeContextMenu
@@ -382,7 +328,7 @@ export function GraphCanvas() {
           {blastLoading ? (
             <div className="graph-blast-loading">Computing blast radius…</div>
           ) : null}
-        </>
+        </GraphErrorBoundary>
       )}
     </div>
   );

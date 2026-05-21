@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"codeatlas/apps/api/internal/ai/providers"
+	"codeatlas/apps/api/internal/telemetry"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 type Service struct {
@@ -40,6 +42,11 @@ type PreparedChat struct {
 }
 
 func (s *Service) PrepareChat(ctx context.Context, req ChatRequest) (*PreparedChat, error) {
+	ctx, span := telemetry.Start(ctx, "ai", "ai.PrepareChat",
+		attribute.Int64("repository.id", req.RepositoryID),
+	)
+	defer span.End()
+
 	if strings.TrimSpace(req.Query) == "" {
 		return nil, fmt.Errorf("query is required")
 	}
@@ -61,7 +68,7 @@ func (s *Service) PrepareChat(ctx context.Context, req ChatRequest) (*PreparedCh
 		return nil, fmt.Errorf("embed query: %w", err)
 	}
 
-	contextItems, err := s.retriever.RetrieveContext(ctx, req.RepositoryID, embedding, 14)
+	contextItems, err := s.retriever.RetrieveContext(ctx, req.RepositoryID, req.TenantID, embedding, 14)
 	if err != nil {
 		return nil, fmt.Errorf("retrieve context: %w", err)
 	}
@@ -106,6 +113,11 @@ func (s *Service) PrepareChat(ctx context.Context, req ChatRequest) (*PreparedCh
 }
 
 func (s *Service) Answer(ctx context.Context, req ChatRequest) (ChatResponse, error) {
+	ctx, span := telemetry.Start(ctx, "ai", "ai.Answer",
+		attribute.Int64("repository.id", req.RepositoryID),
+	)
+	defer span.End()
+
 	prepared, err := s.PrepareChat(ctx, req)
 	if err != nil {
 		return ChatResponse{}, err
@@ -125,6 +137,11 @@ func (s *Service) Answer(ctx context.Context, req ChatRequest) (ChatResponse, er
 
 // StreamCompletion streams chat token deltas from the configured provider manager.
 func (s *Service) StreamCompletion(ctx context.Context, prepared *PreparedChat) (<-chan providers.StreamChunk, <-chan error, error) {
+	ctx, span := telemetry.Start(ctx, "ai", "ai.StreamCompletion",
+		attribute.String("ai.provider", string(prepared.Provider)),
+		attribute.String("ai.model", prepared.Model),
+	)
+	defer span.End()
 	return s.manager.StreamChat(ctx, prepared.Provider, prepared.ChatReq)
 }
 

@@ -1,9 +1,12 @@
 import { useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 
+import { dedupeRepositories } from '../lib/repositories';
 import { applyTheme } from '../lib/theme';
-import { checkApiHealth, syncActiveRepository } from '../lib/syncRepository';
-import { api } from '../lib/api';
+import { queryKeys } from '../lib/queryKeys';
 import { useStore } from '../store';
+import { useHealthQuery, useRepositoriesQuery } from './queries/useRepositories';
+import { useRepositorySyncQuery } from './queries/useRepositorySync';
 
 /** App-wide API health, theme, repositories poll, and per-repo data sync. */
 export function useBackend() {
@@ -13,6 +16,11 @@ export function useBackend() {
   const setSidebarView = useStore((s) => s.setSidebarView);
   const theme = useStore((s) => s.theme);
   const setTourStep = useStore((s) => s.setTourStep);
+  const queryClient = useQueryClient();
+
+  const health = useHealthQuery();
+  const repos = useRepositoriesQuery();
+  useRepositorySyncQuery(activeRepoId);
 
   useEffect(() => {
     applyTheme(theme);
@@ -30,52 +38,44 @@ export function useBackend() {
   }, []);
 
   useEffect(() => {
-    void checkApiHealth();
-    const t = setInterval(() => void checkApiHealth(), 30_000);
-    return () => clearInterval(t);
-  }, []);
+    if (health.isLoading) {
+      useStore.getState().setApiStatus('checking');
+      return;
+    }
+    if (health.isError) {
+      useStore.getState().setApiStatus('offline');
+      return;
+    }
+    const status = health.data?.status;
+    useStore.getState().setApiStatus(status === 'ok' ? 'online' : 'degraded');
+  }, [health.isLoading, health.isError, health.data?.status]);
 
   useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
+    if (!repos.data) return;
+    const list = dedupeRepositories(repos.data);
+    setRepositories(list);
+    if (list.length === 0) {
+      setSidebarView('repos');
       try {
-        const repos = await api.listRepositories();
-        if (cancelled) return;
-        setRepositories(repos);
-        if (repos.length === 0) {
-          setSidebarView('repos');
-          try {
-            if (!localStorage.getItem('codeatlas-tour-done')) {
-              setTourStep(0);
-            }
-          } catch {
-            setTourStep(0);
-          }
-          return;
-        }
-        const current = useStore.getState().activeRepoId;
-        if (current == null || !repos.some((r) => r.id === current)) {
-          const ready = repos.find((r) => r.status === 'ready');
-          setActiveRepo(ready?.id ?? repos[0]?.id ?? null);
+        if (!localStorage.getItem('codeatlas-tour-done')) {
+          setTourStep(0);
         }
       } catch {
-        if (!cancelled) useStore.getState().setApiStatus('offline');
+        setTourStep(0);
       }
-    };
-    void load();
-    const t = setInterval(() => {
-      void api.listRepositories().then(setRepositories).catch(() => undefined);
-    }, 8000);
-    return () => {
-      cancelled = true;
-      clearInterval(t);
-    };
-  }, [setRepositories, setActiveRepo, setSidebarView, setTourStep]);
+      return;
+    }
+    const current = useStore.getState().activeRepoId;
+    if (current == null || !list.some((r) => r.id === current)) {
+      const ready = list.find((r) => r.status === 'ready');
+      setActiveRepo(ready?.id ?? list[0]?.id ?? null);
+    }
+  }, [repos.data, setRepositories, setActiveRepo, setSidebarView, setTourStep]);
 
   useEffect(() => {
     if (activeRepoId == null) return;
-    void syncActiveRepository(activeRepoId);
-    const t = setInterval(() => void syncActiveRepository(activeRepoId), 15_000);
-    return () => clearInterval(t);
-  }, [activeRepoId]);
+    return () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.repoSync(activeRepoId) });
+    };
+  }, [activeRepoId, queryClient]);
 }

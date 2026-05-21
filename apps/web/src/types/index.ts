@@ -57,19 +57,19 @@ export interface BoundaryViolationRow {
   message?: string;
 }
 
-export interface OnboardingPlan {
-  role?: string;
-  team?: string;
-  week_1?: OnboardingWeek;
-  week_2?: OnboardingWeek;
-  week_3_to_4?: OnboardingWeek;
+export interface OnboardingPlanStep {
+  order: number;
+  title: string;
+  description: string;
+  file_paths: string[];
+  estimated_minutes: number;
 }
 
-export interface OnboardingWeek {
-  goal: string;
-  start_here?: { file_path: string; reason: string; priority?: number }[];
-  understand_these?: string[];
-  avoid_for_now?: { file_path: string; reason: string }[];
+export interface OnboardingPlan {
+  role?: string;
+  experience_level?: string;
+  summary?: string;
+  steps?: OnboardingPlanStep[];
 }
 
 export type FileType = 'ts' | 'go' | 'css' | 'test' | 'config' | 'other';
@@ -173,6 +173,8 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   relatedFiles: RelatedFile[];
+  pathValidation?: Record<string, boolean>;
+  ruleValidation?: Record<string, boolean>;
 }
 
 export interface BlastRadiusTarget {

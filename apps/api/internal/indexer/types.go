@@ -6,20 +6,24 @@ import (
 )
 
 type Request struct {
+	RepositoryID   int64
 	RepositoryPath string
 	RepositoryName string
+	TenantID       string
+	ParseWorkers   int
 	OnProgress     func(ProgressEvent)
 }
 
 type Result struct {
-	RepositoryID     int64
-	Files            int
-	Symbols          int
-	Imports          int
-	Exports          int
-	FileDependencies int
-	Embeddings       int
-	Duration         time.Duration
+	RepositoryID      int64
+	Files             int
+	Symbols           int
+	Imports           int
+	Exports           int
+	FileDependencies  int
+	Embeddings        int
+	EmbeddingsSkipped int
+	Duration          time.Duration
 }
 
 type Stage string
@@ -106,18 +110,21 @@ type Embedder interface {
 }
 
 type PersistRequest struct {
+	RepositoryID   int64
 	RepositoryPath string
 	RepositoryName string
+	TenantID       string
 	IndexedFiles   []IndexedFile
 	OnProgress     func(ProgressEvent)
 }
 
 type PersistStats struct {
-	RepositoryID     int64
-	Files            int
-	Symbols          int
-	Imports          int
-	Exports          int
-	FileDependencies int
-	Embeddings       int
+	RepositoryID      int64
+	Files             int
+	Symbols           int
+	Imports           int
+	Exports           int
+	FileDependencies  int
+	Embeddings        int
+	EmbeddingsSkipped int
 }

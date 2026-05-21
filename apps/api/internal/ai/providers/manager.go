@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"codeatlas/apps/api/internal/telemetry"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 type Manager struct {
@@ -53,6 +56,12 @@ func (m *Manager) Resolve(name ProviderName) (Provider, []Provider, error) {
 }
 
 func (m *Manager) Chat(ctx context.Context, providerName ProviderName, req ChatRequest) (ChatResponse, ProviderName, error) {
+	ctx, span := telemetry.Start(ctx, "ai.provider", "ai.provider.Chat",
+		attribute.String("ai.provider.requested", string(providerName)),
+		attribute.String("ai.model", req.Model),
+	)
+	defer span.End()
+
 	primary, fallbacks, err := m.Resolve(providerName)
 	if err != nil {
 		return ChatResponse{}, "", err
@@ -77,6 +86,12 @@ func (m *Manager) Chat(ctx context.Context, providerName ProviderName, req ChatR
 }
 
 func (m *Manager) Embed(ctx context.Context, providerName ProviderName, req EmbedRequest) ([]float32, ProviderName, error) {
+	ctx, span := telemetry.Start(ctx, "ai.provider", "ai.provider.Embed",
+		attribute.String("ai.provider.requested", string(providerName)),
+		attribute.String("ai.model", req.Model),
+	)
+	defer span.End()
+
 	primary, fallbacks, err := m.Resolve(providerName)
 	if err != nil {
 		return nil, "", err
@@ -100,6 +115,12 @@ func (m *Manager) Embed(ctx context.Context, providerName ProviderName, req Embe
 
 // StreamChat streams completion deltas. On failure it falls back to non-streaming Chat for the same provider chain.
 func (m *Manager) StreamChat(ctx context.Context, providerName ProviderName, req ChatRequest) (<-chan StreamChunk, <-chan error, error) {
+	ctx, span := telemetry.Start(ctx, "ai.provider", "ai.provider.StreamChat",
+		attribute.String("ai.provider.requested", string(providerName)),
+		attribute.String("ai.model", req.Model),
+	)
+	defer span.End()
+
 	primary, fallbacks, err := m.Resolve(providerName)
 	if err != nil {
 		return nil, nil, err

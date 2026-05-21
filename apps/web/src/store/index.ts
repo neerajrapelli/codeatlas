@@ -35,6 +35,9 @@ interface CodeAtlasStore {
   highlightedFileIds: Set<string>;
   setHighlightedFileIds: (ids: Set<string>) => void;
 
+  graphHoverFileId: string | null;
+  setGraphHoverFileId: (id: string | null) => void;
+
   sidebarView: SidebarView;
   setSidebarView: (v: SidebarView) => void;
   sidebarVisible: boolean;
@@ -46,8 +49,8 @@ interface CodeAtlasStore {
 
   bottomPanelOpen: boolean;
   toggleBottomPanel: () => void;
-  bottomPanelHeight: number;
-  setBottomPanelHeight: (h: number) => void;
+  aiPanelWidth: number;
+  setAiPanelWidth: (w: number) => void;
 
   ingestionStatus: IngestionStatusPayload | null;
   setIngestionStatus: (s: IngestionStatusPayload | null) => void;
@@ -67,9 +70,12 @@ interface CodeAtlasStore {
   clearChat: () => void;
 
   commandPaletteOpen: boolean;
-  paletteMode: 'files' | 'commands';
+  paletteMode: 'files' | 'unified';
   setCommandPaletteOpen: (open: boolean) => void;
-  openPalette: (mode: 'files' | 'commands') => void;
+  openPalette: (mode: 'files' | 'unified') => void;
+
+  aiPanelDraft: string | null;
+  setAiPanelDraft: (draft: string | null) => void;
 
   progressPopoverOpen: boolean;
   setProgressPopoverOpen: (open: boolean) => void;
@@ -114,13 +120,16 @@ export const useStore = create<CodeAtlasStore>((set) => ({
   setRepositories: (repositories) => set({ repositories }),
   activeRepoId: null,
   setActiveRepo: (activeRepoId) =>
-    set({
-      activeRepoId,
-      selectedNodeId: null,
-      selectedNodePath: null,
-      graphPrefix: '',
-      clusterLayer: null,
-      fileDetail: null,
+    set((state) => {
+      const changed = activeRepoId !== state.activeRepoId;
+      return {
+        activeRepoId,
+        selectedNodeId: changed ? null : state.selectedNodeId,
+        selectedNodePath: changed ? null : state.selectedNodePath,
+        graphPrefix: changed ? '' : state.graphPrefix,
+        clusterLayer: changed ? null : state.clusterLayer,
+        fileDetail: changed ? null : state.fileDetail,
+      };
     }),
 
   graphPrefix: '',
@@ -139,6 +148,8 @@ export const useStore = create<CodeAtlasStore>((set) => ({
 
   highlightedFileIds: new Set(),
   setHighlightedFileIds: (highlightedFileIds) => set({ highlightedFileIds }),
+  graphHoverFileId: null,
+  setGraphHoverFileId: (graphHoverFileId) => set({ graphHoverFileId }),
 
   sidebarView: 'map',
   setSidebarView: (sidebarView) => set({ sidebarView, sidebarVisible: true }),
@@ -151,8 +162,9 @@ export const useStore = create<CodeAtlasStore>((set) => ({
 
   bottomPanelOpen: true,
   toggleBottomPanel: () => set((s) => ({ bottomPanelOpen: !s.bottomPanelOpen })),
-  bottomPanelHeight: 280,
-  setBottomPanelHeight: (bottomPanelHeight) => set({ bottomPanelHeight }),
+  aiPanelWidth: 384,
+  setAiPanelWidth: (aiPanelWidth) =>
+    set({ aiPanelWidth: Math.min(560, Math.max(280, aiPanelWidth)) }),
 
   ingestionStatus: null,
   setIngestionStatus: (ingestionStatus) => set({ ingestionStatus }),
@@ -175,10 +187,12 @@ export const useStore = create<CodeAtlasStore>((set) => ({
   clearChat: () => set({ chatMessages: [] }),
 
   commandPaletteOpen: false,
-  paletteMode: 'commands',
+  paletteMode: 'unified',
   setCommandPaletteOpen: (commandPaletteOpen) =>
-    set(commandPaletteOpen ? { commandPaletteOpen } : { commandPaletteOpen, paletteMode: 'commands' }),
+    set(commandPaletteOpen ? { commandPaletteOpen } : { commandPaletteOpen, paletteMode: 'unified' }),
   openPalette: (paletteMode) => set({ commandPaletteOpen: true, paletteMode }),
+  aiPanelDraft: null,
+  setAiPanelDraft: (aiPanelDraft) => set({ aiPanelDraft }),
 
   progressPopoverOpen: false,
   setProgressPopoverOpen: (progressPopoverOpen) => set({ progressPopoverOpen }),

@@ -538,10 +538,12 @@ func (s *Store) ClearArchitectureSignals(ctx context.Context, repositoryID int64
 
 func (s *Store) InsertArchitectureSignal(ctx context.Context, repositoryID int64, fileID *int64, signalType, summary string, confidence float64, sourceKind string, sourceID *uuid.UUID, meta map[string]any) error {
 	raw, _ := json.Marshal(meta)
+	var tid string
+	_ = s.pool.QueryRow(ctx, `SELECT COALESCE(tenant_id,'default') FROM repositories WHERE id=$1`, repositoryID).Scan(&tid)
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO architecture_signals(repository_id, file_id, signal_type, summary, confidence, source_kind, source_id, metadata)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)
-	`, repositoryID, fileID, signalType, summary, confidence, sourceKind, sourceID, string(raw))
+		INSERT INTO architecture_signals(repository_id, file_id, signal_type, summary, confidence, source_kind, source_id, metadata, tenant_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9)
+	`, repositoryID, fileID, signalType, summary, confidence, sourceKind, sourceID, string(raw), tid)
 	return err
 }
 

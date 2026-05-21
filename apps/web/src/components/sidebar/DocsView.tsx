@@ -2,39 +2,72 @@ import { useEffect, useRef, useState } from 'react';
 
 import { api } from '../../lib/api';
 import { useStore } from '../../store';
+import { EmptyState } from '../ui/EmptyState';
+import { ViewSkeleton } from '../ui/ViewSkeleton';
 
 type Tab = 'context' | 'container' | 'component' | 'adrs';
+
+const TABS: Array<{ id: Tab; label: string }> = [
+  { id: 'context', label: 'Context' },
+  { id: 'container', label: 'Container' },
+  { id: 'component', label: 'Component' },
+  { id: 'adrs', label: 'ADRs' },
+];
 
 export function DocsView() {
   const activeRepoId = useStore((s) => s.activeRepoId);
   const [tab, setTab] = useState<Tab>('container');
-  const [mermaid, setMermaid] = useState('');
   const [adrs, setAdrs] = useState<{ title: string; body: string }[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [diagramError, setDiagramError] = useState<string | null>(null);
   const diagramRef = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
     if (activeRepoId == null) return;
+
     if (tab === 'adrs') {
-      void api.getArchADRs(activeRepoId).then(setAdrs).catch(() => setAdrs([]));
+      setLoading(true);
+      setDiagramError(null);
+      void api
+        .getArchADRs(activeRepoId)
+        .then(setAdrs)
+        .catch(() => setAdrs([]))
+        .finally(() => setLoading(false));
       return;
     }
-    const level = tab === 'context' ? 'context' : tab === 'component' ? 'component' : 'container';
+
+    const level = tab;
+    setLoading(true);
+    setDiagramError(null);
     void api
       .getC4Diagram(activeRepoId, level)
       .then(async (res) => {
-        setMermaid(res.mermaid);
-        if (diagramRef.current) {
-          diagramRef.current.textContent = res.mermaid;
-          try {
-            const m = await import('mermaid');
-            m.default.initialize({ startOnLoad: false, theme: 'dark' });
-            await m.default.run({ nodes: [diagramRef.current] });
-          } catch {
-            diagramRef.current.textContent = res.mermaid;
-          }
+        const el = diagramRef.current;
+        if (!el) return;
+        el.removeAttribute('data-processed');
+        el.innerHTML = '';
+        const src = (res.mermaid ?? '').trim();
+        if (!src) {
+          setDiagramError('No diagram data for this level yet.');
+          return;
+        }
+        try {
+          const m = await import('mermaid');
+          m.default.initialize({
+            startOnLoad: false,
+            theme: 'dark',
+            securityLevel: 'strict',
+          });
+          el.classList.add('mermaid');
+          el.textContent = src;
+          await m.default.run({ nodes: [el] });
+        } catch {
+          setDiagramError('Could not render diagram. Showing source.');
+          el.classList.remove('mermaid');
+          el.textContent = src;
         }
       })
-      .catch(() => setMermaid(''));
+      .catch(() => setDiagramError('Failed to load C4 diagram.'))
+      .finally(() => setLoading(false));
   }, [activeRepoId, tab]);
 
   const exportMd = async () => {
@@ -50,43 +83,63 @@ export function DocsView() {
   };
 
   if (activeRepoId == null) {
-    return <p className="empty-state">Select a repository.</p>;
+    return (
+      <div className="sidebar-view">
+        <h3 className="sidebar-section-title">ARCHITECTURE DOCS</h3>
+        <EmptyState
+          icon="codicon-book"
+          title="No repository"
+          description="Select a repository to view C4 diagrams and ADRs."
+        />
+      </div>
+    );
   }
 
   return (
-    <div className="sidebar-view">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+    <div className="sidebar-view docs-view">
+      <div className="docs-view__header">
         <h3 className="sidebar-section-title">ARCHITECTURE DOCS</h3>
-        <button type="button" onClick={() => void exportMd()}>
+        <button type="button" className="btn-ghost" onClick={() => void exportMd()}>
           Export ↓
         </button>
       </div>
-      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-        {(['context', 'container', 'component', 'adrs'] as Tab[]).map((t) => (
+      <div className="docs-view__tabs" role="tablist">
+        {TABS.map((t) => (
           <button
-            key={t}
+            key={t.id}
             type="button"
-            className={tab === t ? 'active' : ''}
-            onClick={() => setTab(t)}
+            role="tab"
+            aria-selected={tab === t.id}
+            className={`docs-view__tab ${tab === t.id ? 'docs-view__tab--active' : ''}`}
+            onClick={() => setTab(t.id)}
           >
-            {t}
+            {t.label}
           </button>
         ))}
       </div>
-      {tab === 'adrs' ? (
+      {loading ? <ViewSkeleton rows={6} /> : null}
+      {!loading && tab === 'adrs' ? (
         adrs.length === 0 ? (
-          <p className="empty-state">No architectural decision signals yet.</p>
+          <EmptyState
+            icon="codicon-law"
+            title="No ADRs yet"
+            description="Architectural decision signals appear after indexing and drift analysis."
+          />
         ) : (
           adrs.map((a, i) => (
-            <div key={i} className="sidebar-card">
+            <article key={`${a.title}-${String(i)}`} className="sidebar-card adr-card">
               <strong>{a.title}</strong>
-              <pre style={{ whiteSpace: 'pre-wrap', fontSize: 11 }}>{a.body}</pre>
-            </div>
+              <pre className="adr-card__body">{a.body}</pre>
+            </article>
           ))
         )
-      ) : (
-        <div ref={diagramRef} className="mermaid" style={{ fontSize: 11, overflow: 'auto' }} />
-      )}
+      ) : null}
+      {!loading && tab !== 'adrs' ? (
+        <>
+          {diagramError ? <p className="sidebar-hint">{diagramError}</p> : null}
+          <div ref={diagramRef} className="docs-view__diagram" />
+        </>
+      ) : null}
     </div>
   );
 }

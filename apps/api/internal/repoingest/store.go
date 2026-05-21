@@ -125,8 +125,16 @@ func (s *Store) GetByID(ctx context.Context, id int64) (Repository, error) {
 	return r, nil
 }
 
-func (s *Store) DeleteRepository(ctx context.Context, id int64) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM repositories WHERE id=$1`, id)
+func (s *Store) DeleteRepository(ctx context.Context, id int64, tenantID string) error {
+	var (
+		tag interface{ RowsAffected() int64 }
+		err error
+	)
+	if tenantID != "" {
+		tag, err = s.pool.Exec(ctx, `DELETE FROM repositories WHERE id=$1 AND tenant_id=$2`, id, tenantID)
+	} else {
+		tag, err = s.pool.Exec(ctx, `DELETE FROM repositories WHERE id=$1`, id)
+	}
 	if err != nil {
 		return fmt.Errorf("delete repository: %w", err)
 	}
@@ -192,6 +200,9 @@ func (s *Store) GetProgress(ctx context.Context, id int64) (ProgressResponse, er
 		return ProgressResponse{}, fmt.Errorf("get progress: %w", err)
 	}
 	_ = json.Unmarshal(metadataRaw, &p.StageMetadata)
+	if p.Status == StatusReady {
+		p.ProgressPercent = 100
+	}
 	return p, nil
 }
 

@@ -2,6 +2,7 @@ package ai
 
 type ChatRequest struct {
 	RepositoryID int64  `json:"repositoryId"`
+	TenantID     string `json:"-"` // from JWT; never trust client body
 	Query        string `json:"query"`
 	Provider     string `json:"provider,omitempty"`
 	Model        string `json:"model,omitempty"`
