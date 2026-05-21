@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: codeatlas
+          POSTGRES_PASSWORD: codeatlas
+          POSTGRES_DB: codeatlas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U codeatlas -d codeatlas"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: apps/api/go.sum
+      - name: Install build deps (Tree-sitter CGO)
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config
+      - name: Go test
+        working-directory: apps/api
+        env:
+          DATABASE_URL: postgresql://codeatlas:codeatlas@localhost:5432/codeatlas
+          MIGRATIONS_DIR: ./migrations
+        run: |
+          go test ./... -count=1
+          CGO_ENABLED=1 go build -o /tmp/server ./cmd/server
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @codeatlas/web typecheck
+      - run: pnpm --filter @codeatlas/web test
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install chromium --with-deps
+        working-directory: apps/web
+      - run: pnpm --filter @codeatlas/web test:e2e
+
+  validation-platform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @codeatlas/validation-platform build
+      - run: pnpm --filter @codeatlas/validation-platform typecheck
+      - run: pnpm --filter @codeatlas/validation-platform test

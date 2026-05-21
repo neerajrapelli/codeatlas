@@ -25,6 +25,13 @@ type Config struct {
 	ZipMaxBytes          int64
 	ZipMaxFiles          int
 	GitHubToken          string
+	JWTSecret            string
+	AuthBootstrapSecret  string
+	AuthDisabled         bool
+	IngestRatePerMinute  int
+	ChatRatePerMinute    int
+	IngestWorkerConcurrency int
+	RedisURL                string
 }
 
 func Load() Config {
@@ -47,6 +54,13 @@ func Load() Config {
 		ZipMaxBytes:          parseInt64(getEnv("ZIP_MAX_BYTES", "104857600"), 104857600),
 		ZipMaxFiles:          parseInt(getEnv("ZIP_MAX_FILES", "5000"), 5000),
 		GitHubToken:          os.Getenv("GITHUB_TOKEN"),
+		JWTSecret:            os.Getenv("JWT_SECRET"),
+		AuthBootstrapSecret:  os.Getenv("AUTH_BOOTSTRAP_SECRET"),
+		AuthDisabled:         getEnv("AUTH_DISABLED", "false") == "true",
+		IngestRatePerMinute:  parseInt(getEnv("INGEST_RATE_PER_MINUTE", "6"), 6),
+		ChatRatePerMinute:    parseInt(getEnv("CHAT_RATE_PER_MINUTE", "30"), 30),
+		IngestWorkerConcurrency: parseInt(getEnv("INGEST_WORKER_CONCURRENCY", "2"), 2),
+		RedisURL:                os.Getenv("REDIS_URL"),
 	}
 }
 

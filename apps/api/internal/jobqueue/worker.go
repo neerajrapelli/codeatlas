@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -12,17 +13,24 @@ type IngestRunner interface {
 	RunJob(ctx context.Context, job *Job) error
 }
 
-// StartWorker polls the queue and runs ingestion jobs.
-func StartWorker(ctx context.Context, q JobQueue, runner IngestRunner, logger *slog.Logger) {
+// StartWorker polls the queue and runs ingestion jobs with bounded concurrency.
+func StartWorker(ctx context.Context, q JobQueue, runner IngestRunner, concurrency int, logger *slog.Logger) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+
 	go func() {
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
+				wg.Wait()
 				logger.Info("ingestion_worker_stopped")
 				return
 			case <-ticker.C:
@@ -34,14 +42,20 @@ func StartWorker(ctx context.Context, q JobQueue, runner IngestRunner, logger *s
 				if job == nil {
 					continue
 				}
-				logger.Info("ingestion_job_started", "job_id", job.ID, "repository_id", job.RepositoryID)
-				if err := runner.RunJob(ctx, job); err != nil {
-					_ = q.Fail(ctx, job.ID, err.Error())
-					logger.Error("ingestion_job_failed", "job_id", job.ID, "error", err)
-					continue
-				}
-				_ = q.Complete(ctx, job.ID)
-				logger.Info("ingestion_job_complete", "job_id", job.ID, "repository_id", job.RepositoryID)
+				sem <- struct{}{}
+				wg.Add(1)
+				go func(j *Job) {
+					defer wg.Done()
+					defer func() { <-sem }()
+					logger.Info("ingestion_job_started", "job_id", j.ID, "repository_id", j.RepositoryID)
+					if err := runner.RunJob(ctx, j); err != nil {
+						_ = q.Fail(ctx, j.ID, err.Error())
+						logger.Error("ingestion_job_failed", "job_id", j.ID, "error", err)
+						return
+					}
+					_ = q.Complete(ctx, j.ID)
+					logger.Info("ingestion_job_complete", "job_id", j.ID, "repository_id", j.RepositoryID)
+				}(job)
 			}
 		}
 	}()

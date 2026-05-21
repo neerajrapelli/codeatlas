@@ -3,7 +3,6 @@
 import (
 	"io/fs"
 	"path/filepath"
-	"strings"
 )
 
 var ignoredDirs = map[string]struct{}{
@@ -11,13 +10,21 @@ var ignoredDirs = map[string]struct{}{
 	"dist":         {},
 	"build":        {},
 	".git":         {},
+	"vendor":       {},
+	"__pycache__":  {},
+	".venv":        {},
+	"venv":         {},
 }
 
-type TypeScriptFileScanner struct{}
+// MultiLanguageScanner indexes source files for all supported languages.
+type MultiLanguageScanner struct{}
 
-func NewTypeScriptFileScanner() *TypeScriptFileScanner { return &TypeScriptFileScanner{} }
+func NewMultiLanguageScanner() *MultiLanguageScanner { return &MultiLanguageScanner{} }
 
-func (s *TypeScriptFileScanner) Scan(repoPath string) ([]ScannedFile, error) {
+// NewTypeScriptFileScanner is a backward-compatible alias.
+func NewTypeScriptFileScanner() *MultiLanguageScanner { return NewMultiLanguageScanner() }
+
+func (s *MultiLanguageScanner) Scan(repoPath string) ([]ScannedFile, error) {
 	files := make([]ScannedFile, 0, 1024)
 	err := filepath.WalkDir(repoPath, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -30,16 +37,21 @@ func (s *TypeScriptFileScanner) Scan(repoPath string) ([]ScannedFile, error) {
 			return nil
 		}
 
-		ext := strings.ToLower(filepath.Ext(d.Name()))
-		if ext != ".ts" && ext != ".tsx" && ext != ".mts" && ext != ".cts" {
-			return nil
-		}
-
 		rel, err := filepath.Rel(repoPath, path)
 		if err != nil {
 			return err
 		}
-		files = append(files, ScannedFile{AbsolutePath: path, RelativePath: filepath.ToSlash(rel)})
+		rel = filepath.ToSlash(rel)
+		lang, ok := LanguageForPath(rel)
+		if !ok {
+			return nil
+		}
+
+		files = append(files, ScannedFile{
+			AbsolutePath: path,
+			RelativePath: rel,
+			Language:     lang,
+		})
 		return nil
 	})
 	if err != nil {

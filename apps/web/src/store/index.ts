@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 
+import { applyTheme } from '../lib/theme';
+import type { ThemeMode } from '../lib/theme';
 import type {
   ArchitectureRule,
   BlastRadiusResult,
@@ -12,6 +14,8 @@ import type {
   RuleViolation,
   SidebarView,
 } from '../types';
+
+export type ApiStatus = 'checking' | 'online' | 'degraded' | 'offline';
 
 interface CodeAtlasStore {
   repositories: Repository[];
@@ -63,7 +67,9 @@ interface CodeAtlasStore {
   clearChat: () => void;
 
   commandPaletteOpen: boolean;
+  paletteMode: 'files' | 'commands';
   setCommandPaletteOpen: (open: boolean) => void;
+  openPalette: (mode: 'files' | 'commands') => void;
 
   progressPopoverOpen: boolean;
   setProgressPopoverOpen: (open: boolean) => void;
@@ -81,6 +87,26 @@ interface CodeAtlasStore {
   setArchitectureRules: (rules: ArchitectureRule[]) => void;
   ruleViolations: RuleViolation[];
   setRuleViolations: (v: RuleViolation[]) => void;
+
+  toast: { message: string; variant: 'info' | 'success' | 'error' } | null;
+  pushToast: (message: string, variant?: 'info' | 'success' | 'error') => void;
+  clearToast: () => void;
+
+  theme: ThemeMode;
+  setTheme: (theme: ThemeMode) => void;
+
+  apiStatus: ApiStatus;
+  setApiStatus: (status: ApiStatus) => void;
+
+  socioLoading: boolean;
+  setSocioLoading: (loading: boolean) => void;
+
+  tourStep: number | null;
+  setTourStep: (step: number | null) => void;
+  completeTour: () => void;
+
+  focusRepoInput: boolean;
+  setFocusRepoInput: (focus: boolean) => void;
 }
 
 export const useStore = create<CodeAtlasStore>((set) => ({
@@ -149,7 +175,10 @@ export const useStore = create<CodeAtlasStore>((set) => ({
   clearChat: () => set({ chatMessages: [] }),
 
   commandPaletteOpen: false,
-  setCommandPaletteOpen: (commandPaletteOpen) => set({ commandPaletteOpen }),
+  paletteMode: 'commands',
+  setCommandPaletteOpen: (commandPaletteOpen) =>
+    set(commandPaletteOpen ? { commandPaletteOpen } : { commandPaletteOpen, paletteMode: 'commands' }),
+  openPalette: (paletteMode) => set({ commandPaletteOpen: true, paletteMode }),
 
   progressPopoverOpen: false,
   setProgressPopoverOpen: (progressPopoverOpen) => set({ progressPopoverOpen }),
@@ -183,4 +212,34 @@ export const useStore = create<CodeAtlasStore>((set) => ({
   setArchitectureRules: (architectureRules) => set({ architectureRules }),
   ruleViolations: [],
   setRuleViolations: (ruleViolations) => set({ ruleViolations }),
+
+  toast: null,
+  pushToast: (message, variant = 'info') => set({ toast: { message, variant } }),
+  clearToast: () => set({ toast: null }),
+
+  theme: 'system',
+  setTheme: (theme) => {
+    applyTheme(theme);
+    set({ theme });
+  },
+
+  apiStatus: 'checking',
+  setApiStatus: (apiStatus) => set({ apiStatus }),
+
+  socioLoading: false,
+  setSocioLoading: (socioLoading) => set({ socioLoading }),
+
+  tourStep: null,
+  setTourStep: (tourStep) => set({ tourStep }),
+  completeTour: () => {
+    try {
+      localStorage.setItem('codeatlas-tour-done', '1');
+    } catch {
+      /* ignore */
+    }
+    set({ tourStep: null });
+  },
+
+  focusRepoInput: false,
+  setFocusRepoInput: (focusRepoInput) => set({ focusRepoInput }),
 }));

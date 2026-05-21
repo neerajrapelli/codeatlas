@@ -24,6 +24,10 @@ func (q *QueryService) GetOwnership(ctx context.Context, repositoryID int64, fil
 	return q.store.ListOwnership(ctx, repositoryID, fileID, 50)
 }
 
+func (q *QueryService) GetSignals(ctx context.Context, repositoryID int64, limit int, minConfidence float64) ([]ArchitectureSignal, error) {
+	return q.store.ListArchitectureSignals(ctx, repositoryID, limit, minConfidence)
+}
+
 func (q *QueryService) GetFileOverlays(ctx context.Context, repositoryID int64) (GraphOverlay, error) {
 	m, err := q.store.FileOverlays(ctx, repositoryID)
 	if err != nil {
@@ -63,10 +67,12 @@ func (q *QueryService) BuildIngestionStatus(ctx context.Context, repositoryID in
 		AvailablePhases:   []string{PhaseGitHubHistory, PhaseEngineering, PhaseOperational},
 	}
 
+	engineeringReady, _ := q.store.EngineeringMemoryReady(ctx, repositoryID)
+
 	graph := GraphCompleteness{
 		CodeGraphReady:     code.Status == "ready" || code.FilesIndexed > 0,
 		SocioHistoryReady:  status == StatusCompleted,
-		EngineeringReady:   false,
+		EngineeringReady:   engineeringReady,
 		OperationalReady:   false,
 		PartialDataWarning: code.Status != "ready" || (status != StatusCompleted && status != StatusSkipped),
 	}

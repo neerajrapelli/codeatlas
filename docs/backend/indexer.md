@@ -13,8 +13,8 @@ The indexer transforms files on disk into a queryable **code graph** in PostgreS
 
 | Component | File | Role |
 |-----------|------|------|
-| File scanner | `scanner.go` | Walk repo; filter TS files |
-| Parser | `parser.go` | Tree-sitter AST → symbols/imports/exports |
+| File scanner | `scanner.go` | Walk repo; index supported source extensions |
+| Parser | `parser_cgo.go` / `parser_nocgo.go` | Tree-sitter (CGO) or regex fallback → symbols/imports/exports |
 | Resolver | `resolver.go` | Map module paths to file IDs |
 | Postgres store | `postgres_store.go` | Upserts + embedding writes |
 | Types | `types.go` | `Request`, `Result`, progress callback |
@@ -63,12 +63,32 @@ Implemented in scanner—includes `node_modules`, `dist`, `build`, `.git`, cover
 
 | File | Coverage |
 |------|----------|
-| `parser_test.go` | Tree-sitter parse samples |
+| `parser_test.go` | Tree-sitter / parse-bytes samples |
+| `language_test.go` | Extension → language routing |
+| `fallback_test.go` | Regex fallback + multi-language scan |
 | `resolver_test.go` | Import path resolution |
+
+## Supported languages
+
+Extensions are mapped in `language.go` and parsed in `parser_cgo.go` (Tree-sitter grammars via `github.com/tree-sitter/go-tree-sitter`) or `fallback_regex.go` when `CGO_ENABLED=0`.
+
+| Language | Extensions (examples) |
+|----------|---------------------|
+| TypeScript | `.ts`, `.tsx`, `.mts`, `.cts` |
+| JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` |
+| Python | `.py` |
+| Go | `.go` |
+| Java | `.java` |
+| C | `.c`, `.h` |
+| C++ | `.cpp`, `.cc`, `.hpp`, … |
+| PHP | `.php` |
+| C# | `.cs` |
+
+Production Docker builds set `CGO_ENABLED=1` in `apps/api/Dockerfile`.
 
 ## Limitations
 
-- **TypeScript only** in MVP scanner/parser pairing.
+- **Heuristic import resolution** — local path resolution works best for relative imports (TS/JS, Go); Java/C# package imports are stored but not always resolved to files.
 - **Single repository workspace** per ingest job under `WORKSPACE_ROOT`.
 - **No incremental index** — reindex replaces graph for that repository id.
 

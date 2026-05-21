@@ -34,6 +34,7 @@ type CreateRequest struct {
 
 type Repository struct {
 	ID         int64      `json:"id"`
+	TenantID   string     `json:"tenantId,omitempty"`
 	Name       string     `json:"name"`
 	SourceType SourceType `json:"sourceType"`
 	SourceURL  string     `json:"sourceUrl"`

@@ -31,6 +31,7 @@ The graph is the **source of truth**—features are graph enrichment, not discon
 | Security | [security/overview.md](./security/overview.md) |
 | Testing | [testing/strategy.md](./testing/strategy.md) |
 | Logging & monitoring | [operations/logging-monitoring.md](./operations/logging-monitoring.md) |
+| Prometheus metrics | [operations/observability.md](./operations/observability.md) |
 | Troubleshooting | [operations/troubleshooting.md](./operations/troubleshooting.md) |
 | Developer onboarding | [onboarding/developer-guide.md](./onboarding/developer-guide.md) |
 | FAQ | [onboarding/faq.md](./onboarding/faq.md) |

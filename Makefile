@@ -1,4 +1,4 @@
-.PHONY: help install dev dev-full build lint lint-ruff format typecheck clean docker-up docker-down docker-logs db-shell ai-sync index-repo test test-parser test-graph
+.PHONY: help install dev dev-full build lint lint-ruff format typecheck clean docker-up docker-down docker-logs db-shell ai-sync index-repo test test-parser test-graph test-e2e smoke-compose smoke-compose-down
 
 help:
 	@echo "CodeAtlas development commands"
@@ -15,6 +15,8 @@ help:
 	@echo "  make docker-up   Start local dependencies (Postgres + pgvector)"
 	@echo "  make docker-down Stop local dependencies"
 	@echo "  make docker-logs Tail Postgres logs"
+	@echo "  make smoke-compose  Build stack + Playwright E2E against live API"
+	@echo "  make smoke-compose-down  Stop full compose stack"
 	@echo "  make db-shell    Open psql against local Postgres"
 	@echo "  make ai-sync     Install Python dependencies for apps/ai (recommended)"
 	@echo "  make index-repo  Ingest a local TypeScript repository (REPO=/path)"
@@ -36,6 +38,19 @@ test-parser:
 
 test-graph:
 	cd apps/api && go test ./internal/graphhierarchy/...
+
+test-e2e:
+	pnpm --filter @codeatlas/web test:e2e
+
+smoke-compose:
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-compose.ps1
+else
+	bash scripts/smoke-compose.sh
+endif
+
+smoke-compose-down:
+	docker compose down
 
 build:
 	pnpm build

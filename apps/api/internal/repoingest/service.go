@@ -133,12 +133,17 @@ func (s *Service) Ingest(ctx context.Context, req CreateRequest) (Repository, er
 	return repo, nil
 }
 
-func (s *Service) Enqueue(ctx context.Context, req CreateRequest) (Repository, string, error) {
+func (s *Service) Enqueue(ctx context.Context, req CreateRequest, tenantID string) (Repository, string, error) {
 	if _, ok := s.sources[req.SourceType]; !ok {
 		return Repository{}, "", fmt.Errorf("unsupported source type: %s", req.SourceType)
 	}
 	if req.SourceType != SourceZIP && !strings.HasPrefix(req.SourceURL, "http") {
 		return Repository{}, "", fmt.Errorf("sourceUrl must be an http(s) URL")
+	}
+	if req.SourceType != SourceZIP {
+		if err := ValidateGitSourceURL(req.SourceURL); err != nil {
+			return Repository{}, "", err
+		}
 	}
 	if s.queue == nil {
 		return Repository{}, "", fmt.Errorf("ingestion job queue unavailable")
@@ -152,9 +157,13 @@ func (s *Service) Enqueue(ctx context.Context, req CreateRequest) (Repository, s
 	if repoName == "" {
 		repoName = deriveName(req)
 	}
+	if tenantID == "" {
+		tenantID = "default"
+	}
 
 	repo, err := s.store.Create(ctx, Repository{
 		Name:          repoName,
+		TenantID:      tenantID,
 		SourceType:    req.SourceType,
 		SourceURL:     req.SourceURL,
 		Branch:        req.Branch,
@@ -299,6 +308,10 @@ func (s *Service) runSocioEnrichment(repositoryID int64) {
 		defer cancel()
 		if err := s.socioIngest.RunPhase1GitHubHistory(ctx, repositoryID); err != nil {
 			s.logger.Error("socio_ingestion_failed", "repository_id", repositoryID, "error", err)
+			return
+		}
+		if err := s.socioIngest.RunPhase2EngineeringMemory(ctx, repositoryID); err != nil {
+			s.logger.Error("engineering_memory_failed", "repository_id", repositoryID, "error", err)
 		}
 	}()
 }
@@ -310,8 +323,8 @@ func maxInt(a, b int) int {
 	return b
 }
 
-func (s *Service) ListRecent(ctx context.Context, limit int) ([]Repository, error) {
-	return s.store.ListRecent(ctx, limit)
+func (s *Service) ListRecent(ctx context.Context, tenantID string, limit int) ([]Repository, error) {
+	return s.store.ListRecent(ctx, tenantID, limit)
 }
 
 func (s *Service) GetProgress(ctx context.Context, repositoryID int64) (ProgressResponse, error) {

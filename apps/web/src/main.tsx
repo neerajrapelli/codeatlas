@@ -4,7 +4,13 @@ import 'reactflow/dist/style.css';
 import '@vscode/codicons/dist/codicon.css';
 
 import { App } from './App';
+import { getStoredTheme, initTheme } from './lib/theme';
+import { useStore } from './store';
+import './styles/themes.css';
 import './styles/vscode.css';
+
+initTheme();
+useStore.setState({ theme: getStoredTheme() });
 
 const rootEl = document.getElementById('root');
 if (!rootEl) {

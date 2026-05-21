@@ -76,8 +76,8 @@ func main() {
 	aiService = ai.NewService(retriever, providers.ProviderName(cfg.AIDefaultProvider), cfg.AIDefaultModel, cfg.AIContextTokenBudget, providerManager, logger)
 
 	idxService := indexer.New(
-		indexer.NewTypeScriptFileScanner(),
-		indexer.NewTreeSitterTypeScriptParser(),
+		indexer.NewMultiLanguageScanner(),
+		indexer.NewTreeSitterParser(),
 		indexer.NewPostgresStore(pool, embedClient),
 		logger,
 	)
@@ -109,7 +109,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	jobqueue.StartWorker(ctx, ingestQueue, ingestRunner, logger)
+	jobqueue.StartWorker(ctx, ingestQueue, ingestRunner, cfg.IngestWorkerConcurrency, logger)
 
 	mcpServer := mcp.NewServer(pool, blastSvc, driftEngine, socioQuery)
 	onboardingSvc := onboarding.NewService(aiService)

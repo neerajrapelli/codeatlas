@@ -9,13 +9,13 @@
 | Capability | Status |
 |------------|--------|
 | Ingest GitHub / GitLab / Bitbucket / ZIP | ✅ |
-| TypeScript parsing (Tree-sitter) | ✅ |
+| Multi-language parsing (TS/JS, Go, Python, Java, C/C++, PHP, C#) | ✅ Tree-sitter (CGO) + regex fallback |
 | Dependency graph + cluster map UI | ✅ |
 | Semantic embeddings + Graph RAG chat (SSE) | ✅ (OpenAI recommended) |
 | GitHub history → ownership & hotspots | ✅ (`GITHUB_TOKEN`) |
 | Engineering memory / CI risk (Phase 2–3) | Schema only |
 
-**Not in scope today:** user authentication, production deploy manifests, CI workflows in-repo.
+**Production notes:** JWT auth and Docker Compose are available; set `AUTH_DISABLED=false` and a strong `JWT_SECRET` for real deployments. CI workflows are not yet in-repo.
 
 ## Stack
 

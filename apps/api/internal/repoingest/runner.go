@@ -122,6 +122,9 @@ func (s *Service) executeIngestion(
 			return err
 		}
 		durations.Complete(currentStep)
+		if req.SourceType == SourceZIP && req.ZIPPath != "" {
+			_ = os.Remove(req.ZIPPath)
+		}
 		prepMs := time.Since(stageStart).Milliseconds()
 		stageLabel := "cloneDurationMs"
 		if req.SourceType == SourceZIP {

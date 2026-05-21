@@ -92,6 +92,22 @@ type PRFileChange struct {
 	Deletions int
 }
 
+type IssueItem struct {
+	Number    int
+	Title     string
+	Body      string
+	State     string
+	CreatedAt time.Time
+	User      *User
+}
+
+type IssueCommentItem struct {
+	ID        int64
+	Body      string
+	CreatedAt time.Time
+	User      *User
+}
+
 // ListCommits pages through commit history (newest first).
 func (c *Client) ListCommits(ctx context.Context, owner, repo string, since time.Time, maxPages int) ([]CommitListItem, error) {
 	var all []CommitListItem
@@ -279,6 +295,91 @@ func (c *Client) ListPRFiles(ctx context.Context, owner, repo string, prNumber i
 			Path: f.Filename, Status: f.Status,
 			Additions: f.Additions, Deletions: f.Deletions,
 		})
+	}
+	return out, nil
+}
+
+// ListIssues returns repository issues (excludes pull requests).
+func (c *Client) ListIssues(ctx context.Context, owner, repo string, maxPages int) ([]IssueItem, error) {
+	var all []IssueItem
+	page := 1
+	perPage := 100
+	for page <= maxPages {
+		url := fmt.Sprintf("%s/repos/%s/%s/issues?state=all&per_page=%d&page=%d&sort=updated&direction=desc",
+			apiBase, owner, repo, perPage, page)
+		body, err := c.get(ctx, url)
+		if err != nil {
+			return nil, err
+		}
+		var pageItems []struct {
+			Number    int    `json:"number"`
+			Title     string `json:"title"`
+			Body      string `json:"body"`
+			State     string `json:"state"`
+			CreatedAt string `json:"created_at"`
+			PullRequest *struct {
+				URL string `json:"url"`
+			} `json:"pull_request"`
+			User *struct {
+				ID    int64  `json:"id"`
+				Login string `json:"login"`
+			} `json:"user"`
+		}
+		if err := json.Unmarshal(body, &pageItems); err != nil {
+			return nil, fmt.Errorf("decode issues: %w", err)
+		}
+		if len(pageItems) == 0 {
+			break
+		}
+		for _, it := range pageItems {
+			if it.PullRequest != nil {
+				continue
+			}
+			created, _ := time.Parse(time.RFC3339, it.CreatedAt)
+			item := IssueItem{
+				Number: it.Number, Title: it.Title, Body: it.Body,
+				State: it.State, CreatedAt: created,
+			}
+			if it.User != nil {
+				item.User = &User{ID: it.User.ID, Login: it.User.Login}
+			}
+			all = append(all, item)
+		}
+		if len(pageItems) < perPage {
+			break
+		}
+		page++
+	}
+	return all, nil
+}
+
+// ListIssueComments returns conversation comments for an issue or pull request number.
+func (c *Client) ListIssueComments(ctx context.Context, owner, repo string, issueNumber int) ([]IssueCommentItem, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments?per_page=100", apiBase, owner, repo, issueNumber)
+	body, err := c.get(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	var raw []struct {
+		ID        int64  `json:"id"`
+		Body      string `json:"body"`
+		CreatedAt string `json:"created_at"`
+		User      *struct {
+			ID    int64  `json:"id"`
+			Login string `json:"login"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("decode issue comments: %w", err)
+	}
+	out := make([]IssueCommentItem, 0, len(raw))
+	for _, cmt := range raw {
+		created, _ := time.Parse(time.RFC3339, cmt.CreatedAt)
+		item := IssueCommentItem{ID: cmt.ID, Body: cmt.Body, CreatedAt: created}
+		if cmt.User != nil {
+			item.User = &User{ID: cmt.User.ID, Login: cmt.User.Login}
+		}
+		out = append(out, item)
 	}
 	return out, nil
 }

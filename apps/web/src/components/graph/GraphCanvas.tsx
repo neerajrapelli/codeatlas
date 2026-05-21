@@ -21,6 +21,7 @@ import { GraphFileNode } from './GraphFileNode';
 import { GraphNodeContextMenu } from './GraphNodeContextMenu';
 import { GraphSkeleton } from './GraphSkeleton';
 import { GraphToolbar } from './GraphToolbar';
+import { GraphWelcome } from './GraphWelcome';
 
 const elk = new ELK();
 
@@ -327,6 +328,14 @@ export function GraphCanvas() {
     [setGraphPrefix, setSelectedNode],
   );
 
+  if (activeRepoId == null) {
+    return (
+      <div className="graph-area">
+        <GraphWelcome />
+      </div>
+    );
+  }
+
   return (
     <div className="graph-area">
       <IngestionBar progress={progress} fading={fading} repoName={repo?.name} />
@@ -353,12 +362,12 @@ export function GraphCanvas() {
               }}
             >
               <MiniMap
-                nodeColor={() => '#333'}
-                maskColor="rgba(14,14,14,0.8)"
+                nodeColor={() => 'var(--border-default)'}
+                maskColor="var(--minimap-mask)"
                 style={{ background: 'var(--bg-1)' }}
               />
               <Controls />
-              <Background gap={24} size={1} color="#2a2a2a" />
+              <Background gap={24} size={1} color="var(--graph-dot)" />
             </ReactFlow>
           </div>
           {contextMenu ? (

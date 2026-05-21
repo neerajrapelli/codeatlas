@@ -25,6 +25,7 @@ export function AIPanel() {
   const updateChatMessage = useStore((s) => s.updateChatMessage);
   const setHighlightedFileIds = useStore((s) => s.setHighlightedFileIds);
   const setSelectedNode = useStore((s) => s.setSelectedNode);
+  const pushToast = useStore((s) => s.pushToast);
 
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -64,9 +65,9 @@ export function AIPanel() {
         },
       );
     } catch (e) {
-      updateChatMessage(aid, {
-        content: e instanceof Error ? e.message : 'Chat failed',
-      });
+      const msg = e instanceof Error ? e.message : 'Chat failed';
+      updateChatMessage(aid, { content: msg });
+      pushToast(msg, 'error');
     } finally {
       setLoading(false);
     }

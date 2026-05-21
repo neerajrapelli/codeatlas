@@ -33,6 +33,13 @@ Variables read by the codebase (from `config.Load`, Vite, Compose, or Pydantic s
 | `AI_DEFAULT_MODEL` | `local-default` | Default model name |
 | `AI_CONTEXT_TOKEN_BUDGET` | `7000` | Prompt size cap |
 | `GITHUB_TOKEN` | — | GitHub REST for socio Phase 1 |
+| `JWT_SECRET` | — | HS256 JWT validation (required when `AUTH_DISABLED=false`) |
+| `AUTH_BOOTSTRAP_SECRET` | — | Protects `POST /auth/token` (empty disables minting) |
+| `AUTH_DISABLED` | `false` | Set `true` for local dev without JWT |
+| `REDIS_URL` | — | Distributed rate limits (e.g. `redis://localhost:6379/0`) |
+| `INGEST_RATE_PER_MINUTE` | `6` | Rate limit for ingest/reindex POSTs |
+| `CHAT_RATE_PER_MINUTE` | `30` | Rate limit for AI chat POSTs |
+| `INGEST_WORKER_CONCURRENCY` | `2` | Parallel ingestion jobs |
 | `ANTHROPIC_API_KEY` | — | Provider registration |
 | `GEMINI_API_KEY` | — | Provider registration |
 | `HUGGINGFACE_API_KEY` | — | Provider registration |

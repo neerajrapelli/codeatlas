@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"codeatlas/apps/api/internal/ai"
+	"codeatlas/apps/api/internal/auth"
 	"codeatlas/apps/api/internal/blastradius"
 	"codeatlas/apps/api/internal/config"
 	"codeatlas/apps/api/internal/driftdetector"
@@ -31,7 +32,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const defaultBlastDepth = 3
+const (
+	defaultBlastDepth   = 3
+	maxClusterFiles     = 500
+	maxClusterEdges     = 2000
+	maxBlastResultFiles = 200
+)
 
 type healthResponse struct {
 	Service string `json:"service"`
@@ -60,19 +66,58 @@ func New(
 		mcpServer.Register(mux)
 	}
 
+	mux.Handle("GET /metrics", metricsHandler())
+
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		status := "ok"
+		code := http.StatusOK
+		if err := pool.Ping(ctx); err != nil {
+			status = "degraded"
+			code = http.StatusServiceUnavailable
+		}
 		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
 		_ = json.NewEncoder(w).Encode(healthResponse{
 			Service: "codeatlas-api",
-			Status:  "ok",
+			Status:  status,
 			Version: "0.1.0",
 		})
 	})
 
-	mux.HandleFunc("GET /graph/files", func(w http.ResponseWriter, r *http.Request) {
-		repoID, err := parseRepositoryID(r)
+	mux.HandleFunc("POST /auth/token", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.AuthDisabled || cfg.JWTSecret == "" {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "token issuance disabled"})
+			return
+		}
+		if cfg.AuthBootstrapSecret == "" {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "set AUTH_BOOTSTRAP_SECRET to enable token issuance"})
+			return
+		}
+		if r.Header.Get("X-Bootstrap-Secret") != cfg.AuthBootstrapSecret {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid bootstrap secret"})
+			return
+		}
+		var body struct {
+			Subject  string `json:"subject"`
+			TenantID string `json:"tenant_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Subject == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "subject is required"})
+			return
+		}
+		token, err := auth.IssueToken(cfg.JWTSecret, body.Subject, body.TenantID, 24*time.Hour)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to issue token"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"token": token, "expires_in": 86400})
+	})
+
+	mux.HandleFunc("GET /graph/files", func(w http.ResponseWriter, r *http.Request) {
+		repoID, ok := parseRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 
@@ -88,9 +133,8 @@ func New(
 	})
 
 	mux.HandleFunc("GET /graph/clusters", func(w http.ResponseWriter, r *http.Request) {
-		repoID, err := parseRepositoryID(r)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		repoID, ok := parseRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		prefix := strings.TrimSpace(r.URL.Query().Get("prefix"))
@@ -103,11 +147,22 @@ func New(
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to build cluster layer"})
 			return
 		}
+		files := layer.Files
+		if len(files) > maxClusterFiles {
+			files = files[:maxClusterFiles]
+		}
+		edges := layer.Edges
+		if len(edges) > maxClusterEdges {
+			edges = edges[:maxClusterEdges]
+		}
 		payload := map[string]any{
-			"prefix":   layer.Prefix,
-			"clusters": layer.Clusters,
-			"files":    layer.Files,
-			"edges":    layer.Edges,
+			"prefix":      layer.Prefix,
+			"clusters":    layer.Clusters,
+			"files":       files,
+			"edges":       edges,
+			"truncated":   len(layer.Files) > maxClusterFiles || len(layer.Edges) > maxClusterEdges,
+			"totalFiles":  len(layer.Files),
+			"totalEdges":  len(layer.Edges),
 		}
 		if socioQuery != nil {
 			if overlay, err := socioQuery.GetFileOverlays(ctx, repoID); err == nil {
@@ -118,9 +173,8 @@ func New(
 	})
 
 	mux.HandleFunc("GET /graph/file", func(w http.ResponseWriter, r *http.Request) {
-		repoID, err := parseRepositoryID(r)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		repoID, ok := parseRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		raw := r.URL.Query().Get("fileId")
@@ -146,9 +200,8 @@ func New(
 	})
 
 	mux.HandleFunc("GET /graph/symbols", func(w http.ResponseWriter, r *http.Request) {
-		repoID, err := parseRepositoryID(r)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		repoID, ok := parseRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		raw := r.URL.Query().Get("fileId")
@@ -180,7 +233,7 @@ func New(
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
-		repos, err := ingestService.ListRecent(ctx, 25)
+		repos, err := ingestService.ListRecent(ctx, tenantFromRequest(r.Context()), 25)
 		if err != nil {
 			slog.Error("list_repositories_failed", "error", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list repositories"})
@@ -194,9 +247,8 @@ func New(
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "ingestion status unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || repoID <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -242,9 +294,8 @@ func New(
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "ingestion status unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || repoID <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		flusher, ok := w.(http.Flusher)
@@ -310,15 +361,15 @@ func New(
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "ownership unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || repoID <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		var fileID int64
 		if raw := r.URL.Query().Get("fileId"); raw != "" {
-			fileID, err = strconv.ParseInt(raw, 10, 64)
-			if err != nil || fileID <= 0 {
+			var parseErr error
+			fileID, parseErr = strconv.ParseInt(raw, 10, 64)
+			if parseErr != nil || fileID <= 0 {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid fileId"})
 				return
 			}
@@ -334,14 +385,45 @@ func New(
 		writeJSON(w, http.StatusOK, map[string]any{"ownership": rows})
 	})
 
+	mux.HandleFunc("GET /repositories/{id}/signals", func(w http.ResponseWriter, r *http.Request) {
+		if socioQuery == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "signals unavailable"})
+			return
+		}
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
+			return
+		}
+		limit := 50
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			if n, err := strconv.Atoi(raw); err == nil && n > 0 && n <= 200 {
+				limit = n
+			}
+		}
+		minConf := 0.7
+		if raw := r.URL.Query().Get("minConfidence"); raw != "" {
+			if f, err := strconv.ParseFloat(raw, 64); err == nil && f >= 0 && f <= 1 {
+				minConf = f
+			}
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		rows, err := socioQuery.GetSignals(ctx, repoID, limit, minConf)
+		if err != nil {
+			slog.Error("signals_query_failed", "repository_id", repoID, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load signals"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"signals": rows})
+	})
+
 	mux.HandleFunc("GET /repositories/{id}/hotspots", func(w http.ResponseWriter, r *http.Request) {
 		if socioQuery == nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "hotspots unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || repoID <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		limit := 25
@@ -366,9 +448,8 @@ func New(
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "blast radius unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || repoID <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		filePath := strings.TrimSpace(r.URL.Query().Get("file_path"))
@@ -383,9 +464,15 @@ func New(
 				depth = n
 			}
 		}
+		if depth > 10 {
+			depth = 10
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
 		result, err := blastSvc.Analyze(ctx, repoID, filePath, symbol, depth)
+		if result != nil && len(result.Files) > maxBlastResultFiles {
+			result.Files = result.Files[:maxBlastResultFiles]
+		}
 		if err != nil {
 			if strings.Contains(err.Error(), "not found") {
 				writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
@@ -403,9 +490,8 @@ func New(
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "drift detection unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || repoID <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		var req driftdetector.CreateRuleRequest
@@ -433,9 +519,8 @@ func New(
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "drift detection unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || repoID <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -453,9 +538,8 @@ func New(
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "drift detection unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || repoID <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		ruleID, err := uuid.Parse(r.PathValue("rule_id"))
@@ -481,9 +565,8 @@ func New(
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "drift detection unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || repoID <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -501,9 +584,8 @@ func New(
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "drift detection unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || repoID <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
@@ -521,9 +603,8 @@ func New(
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "drift detection unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || repoID <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		var req driftdetector.CheckPRRequest
@@ -546,9 +627,8 @@ func New(
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "teams unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || repoID <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
@@ -566,10 +646,13 @@ func New(
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "teams unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
+			return
+		}
 		teamID, err2 := uuid.Parse(r.PathValue("team_id"))
-		if err != nil || repoID <= 0 || err2 != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		if err2 != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid team id"})
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
@@ -587,9 +670,8 @@ func New(
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "teams unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || repoID <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -607,9 +689,8 @@ func New(
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "teams unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || repoID <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
@@ -627,9 +708,8 @@ func New(
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "onboarding unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || repoID <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		var req onboarding.PlanRequest
@@ -658,9 +738,8 @@ func New(
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "docs unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || repoID <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		level := r.URL.Query().Get("level")
@@ -679,9 +758,8 @@ func New(
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "docs unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || repoID <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
@@ -699,9 +777,8 @@ func New(
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "docs unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || repoID <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
@@ -719,9 +796,8 @@ func New(
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "docs unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || repoID <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -741,9 +817,8 @@ func New(
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "ingestion unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || repoID <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -763,9 +838,8 @@ func New(
 			return
 		}
 		req, cleanup, err := parseRepositoryCreateRequest(r, cfg.ZipMaxBytes)
-		if cleanup != nil {
-			defer cleanup()
-		}
+		// ZIP temp file must survive until the background worker finishes extraction.
+		_ = cleanup
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -773,7 +847,7 @@ func New(
 
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
-		repo, jobID, err := ingestService.Enqueue(ctx, req)
+		repo, jobID, err := ingestService.Enqueue(ctx, req, normalizeTenantID(tenantFromRequest(r.Context())))
 		if err != nil {
 			slog.Error("repository_ingestion_failed", "error", err, "source_type", req.SourceType, "source_url", req.SourceURL)
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
@@ -787,9 +861,8 @@ func New(
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "ingestion unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || repoID <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -822,9 +895,8 @@ func New(
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "ingestion unavailable"})
 			return
 		}
-		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || repoID <= 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		repoID, ok := parsePathRepositoryIDGuarded(w, r, pool)
+		if !ok {
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -858,6 +930,9 @@ func New(
 		}
 		if req.RepositoryID == 0 {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "repositoryId is required"})
+			return
+		}
+		if !guardRepository(w, r, pool, int64(req.RepositoryID)) {
 			return
 		}
 
@@ -966,7 +1041,18 @@ func New(
 		flusher.Flush()
 	})
 
-	handler := withCORS(cfg.AllowedOrigins, loggingMiddleware(mux))
+	var jwtValidator *auth.Validator
+	if !cfg.AuthDisabled {
+		if v, err := auth.NewValidator(cfg.JWTSecret); err == nil {
+			jwtValidator = v
+		} else {
+			slog.Warn("auth_disabled_missing_jwt_secret", "error", err)
+		}
+	}
+	rl := NewRequestLimiter(cfg.RedisURL, slog.Default())
+	core := withRateLimit(rl, "/repositories", 3, cfg.IngestRatePerMinute,
+		withRateLimit(rl, "/ai/chat", 10, cfg.ChatRatePerMinute, mux))
+	handler := withCORS(cfg.AllowedOrigins, withMetrics(loggingMiddleware(withAuth(jwtValidator, core))))
 	return &http.Server{Addr: cfg.HTTPAddr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 }
 
@@ -1075,13 +1161,37 @@ func writeSSE(w http.ResponseWriter, payload any) error {
 func parseRepositoryID(r *http.Request) (int64, error) {
 	raw := r.URL.Query().Get("repositoryId")
 	if raw == "" {
-		return 1, nil
+		return 0, errors.New("repositoryId is required")
 	}
 	repoID, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || repoID <= 0 {
 		return 0, errors.New("repositoryId must be a positive integer")
 	}
 	return repoID, nil
+}
+
+func parseRepositoryIDGuarded(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) (int64, bool) {
+	repoID, err := parseRepositoryID(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return 0, false
+	}
+	if !guardRepository(w, r, pool, repoID) {
+		return 0, false
+	}
+	return repoID, true
+}
+
+func parsePathRepositoryIDGuarded(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) (int64, bool) {
+	repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || repoID <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		return 0, false
+	}
+	if !guardRepository(w, r, pool, repoID) {
+		return 0, false
+	}
+	return repoID, true
 }
 
 type graphFile struct {

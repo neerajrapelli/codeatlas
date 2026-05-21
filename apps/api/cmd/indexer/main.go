@@ -54,8 +54,8 @@ func main() {
 	}
 
 	svc := indexer.New(
-		indexer.NewTypeScriptFileScanner(),
-		indexer.NewTreeSitterTypeScriptParser(),
+		indexer.NewMultiLanguageScanner(),
+		indexer.NewTreeSitterParser(),
 		indexer.NewPostgresStore(pool, embedder),
 		logger,
 	)

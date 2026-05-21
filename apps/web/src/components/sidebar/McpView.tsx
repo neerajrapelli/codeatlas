@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { getApiBase } from '../../apiBase';
+import { apiFetch } from '../../lib/apiFetch';
 
 const MCP_CONFIG = `{
   "mcpServers": {
@@ -16,14 +16,13 @@ export function McpView() {
   const [copied, setCopied] = useState(false);
 
   const refresh = useCallback(async () => {
-    const base = getApiBase();
     try {
-      const m = await fetch(`${base}/mcp/manifest`);
+      const m = await apiFetch('/mcp/manifest');
       if (m.ok) {
         const json = (await m.json()) as { tools?: Array<{ name: string }> };
         setTools((json.tools ?? []).map((t) => t.name));
       }
-      const l = await fetch(`${base}/mcp/logs?limit=10`);
+      const l = await apiFetch('/mcp/logs?limit=10');
       if (l.ok) {
         const json = (await l.json()) as {
           calls?: Array<{ tool: string; at: string; ok: boolean; error?: string }>;

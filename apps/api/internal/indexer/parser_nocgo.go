@@ -5,70 +5,44 @@ package indexer
 import (
 	"fmt"
 	"os"
-	"regexp"
-	"strings"
 )
 
-var (
-	importRE    = regexp.MustCompile(`(?m)^\s*import(?:\s+type)?[\s\w{},*\n\r]*from\s+["']([^"']+)["']`)
-	importBare  = regexp.MustCompile(`(?m)^\s*import\s+["']([^"']+)["']`)
-	functionRE  = regexp.MustCompile(`(?m)^\s*(export\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)`)
-	classRE     = regexp.MustCompile(`(?m)^\s*(export\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)`)
-	interfaceRE = regexp.MustCompile(`(?m)^\s*(export\s+)?interface\s+([A-Za-z_][A-Za-z0-9_]*)`)
-	exportRE    = regexp.MustCompile(`(?m)^\s*export\s+\{([^}]+)\}`)
-)
+// TreeSitterParser uses regex fallbacks when CGO is disabled.
+type TreeSitterParser struct{}
 
-type TreeSitterTypeScriptParser struct{}
+func NewTreeSitterParser() *TreeSitterParser { return &TreeSitterParser{} }
 
-func NewTreeSitterTypeScriptParser() *TreeSitterTypeScriptParser {
-	return &TreeSitterTypeScriptParser{}
-}
+func NewTreeSitterTypeScriptParser() *TreeSitterParser { return NewTreeSitterParser() }
 
-func (p *TreeSitterTypeScriptParser) Parse(file ScannedFile) (ParsedFile, error) {
+func (p *TreeSitterParser) Parse(file ScannedFile) (ParsedFile, error) {
+	lang := file.Language
+	if lang == "" {
+		var ok bool
+		lang, ok = LanguageForPath(file.RelativePath)
+		if !ok {
+			return ParsedFile{File: file}, nil
+		}
+	}
 	sourceBytes, err := os.ReadFile(file.AbsolutePath)
 	if err != nil {
 		return ParsedFile{}, fmt.Errorf("read source %s: %w", file.RelativePath, err)
 	}
-	source := string(sourceBytes)
-	out := ParsedFile{File: file}
-
-	for _, match := range importRE.FindAllStringSubmatch(source, -1) {
-		out.Imports = append(out.Imports, Import{
-			ModulePath: match[1],
-			TypeOnly:   strings.Contains(match[0], "import type"),
-		})
+	switch lang {
+	case LangTypeScript, LangJavaScript:
+		return parseTSJSFallback(file, string(sourceBytes)), nil
+	case LangGo:
+		return parseGoFallback(file, string(sourceBytes)), nil
+	case LangPython:
+		return parsePythonFallback(file, string(sourceBytes)), nil
+	case LangJava:
+		return parseJavaFallback(file, string(sourceBytes)), nil
+	case LangC, LangCPP:
+		return parseCFallback(file, string(sourceBytes)), nil
+	case LangPHP:
+		return parsePHPFallback(file, string(sourceBytes)), nil
+	case LangCSharp:
+		return parseCSharpFallback(file, string(sourceBytes)), nil
+	default:
+		return ParsedFile{File: file}, nil
 	}
-	for _, match := range importBare.FindAllStringSubmatch(source, -1) {
-		out.Imports = append(out.Imports, Import{ModulePath: match[1]})
-	}
-
-	appendSymbol := func(kind SymbolKind, exported bool, name string) {
-		sym := Symbol{Name: name, Kind: kind, Exported: exported}
-		out.Symbols = append(out.Symbols, sym)
-		if exported {
-			out.Exports = append(out.Exports, Export{Name: name})
-		}
-	}
-
-	for _, match := range functionRE.FindAllStringSubmatch(source, -1) {
-		appendSymbol(SymbolFunction, strings.TrimSpace(match[1]) != "", match[2])
-	}
-	for _, match := range classRE.FindAllStringSubmatch(source, -1) {
-		appendSymbol(SymbolClass, strings.TrimSpace(match[1]) != "", match[2])
-	}
-	for _, match := range interfaceRE.FindAllStringSubmatch(source, -1) {
-		appendSymbol(SymbolInterface, strings.TrimSpace(match[1]) != "", match[2])
-	}
-
-	for _, match := range exportRE.FindAllStringSubmatch(source, -1) {
-		parts := strings.Split(match[1], ",")
-		for _, part := range parts {
-			name := strings.TrimSpace(strings.Split(part, " as ")[0])
-			if name != "" {
-				out.Exports = append(out.Exports, Export{Name: name})
-			}
-		}
-	}
-
-	return out, nil
 }

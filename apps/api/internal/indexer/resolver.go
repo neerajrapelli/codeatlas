@@ -5,6 +5,23 @@ import (
 	"strings"
 )
 
+var resolveExtensions = []string{
+	".ts", ".tsx", ".mts", ".cts",
+	".js", ".jsx", ".mjs", ".cjs",
+	".py",
+	".go",
+	".java",
+	".c", ".h",
+	".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx",
+	".php",
+	".cs",
+}
+
+var resolveIndexFiles = []string{
+	"index.ts", "index.tsx", "index.js", "index.jsx",
+	"__init__.py", "mod.go",
+}
+
 func resolveDependencies(repoPath string, file ScannedFile, imports []Import, known map[string]struct{}) []string {
 	deps := make([]string, 0)
 	for _, imp := range imports {
@@ -36,12 +53,12 @@ func resolveLocalImport(repoPath, fromRelPath, spec string, known map[string]str
 	if rel, ok := check(candidate); ok {
 		return rel, true
 	}
-	for _, ext := range []string{".ts", ".tsx", ".mts", ".cts"} {
+	for _, ext := range resolveExtensions {
 		if rel, ok := check(candidate + ext); ok {
 			return rel, true
 		}
 	}
-	for _, idx := range []string{"index.ts", "index.tsx", "index.mts", "index.cts"} {
+	for _, idx := range resolveIndexFiles {
 		if rel, ok := check(filepath.Join(candidate, idx)); ok {
 			return rel, true
 		}

@@ -471,6 +471,134 @@ type FileSocioContext struct {
 	UniqueAuthors90d   int
 }
 
+func (s *Store) ListPullRequestRefs(ctx context.Context, repositoryID int64, limit int) ([]PullRequestRef, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, external_number, title
+		FROM pull_requests
+		WHERE repository_id=$1
+		ORDER BY created_at DESC
+		LIMIT $2
+	`, repositoryID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PullRequestRef
+	for rows.Next() {
+		var ref PullRequestRef
+		if err := rows.Scan(&ref.ID, &ref.Number, &ref.Title); err != nil {
+			return nil, err
+		}
+		out = append(out, ref)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) UpsertIssue(ctx context.Context, repositoryID int64, number int, title, state string, authorID *uuid.UUID, created time.Time, closed *time.Time) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO issues(repository_id, external_number, title, state, author_contributor_id, created_at, closed_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)
+		ON CONFLICT (repository_id, external_number) DO UPDATE SET
+		  title=EXCLUDED.title, state=EXCLUDED.state, closed_at=EXCLUDED.closed_at
+		RETURNING id
+	`, repositoryID, number, title, state, authorID, created, closed).Scan(&id)
+	return id, err
+}
+
+func (s *Store) UpsertIssueFileRef(ctx context.Context, issueID uuid.UUID, fileID int64, kind string) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO issue_file_refs(issue_id, file_id, ref_kind)
+		VALUES ($1,$2,$3)
+		ON CONFLICT (issue_id, file_id) DO UPDATE SET ref_kind=EXCLUDED.ref_kind
+	`, issueID, fileID, kind)
+	return err
+}
+
+func (s *Store) UpsertPRComment(ctx context.Context, prID uuid.UUID, authorID *uuid.UUID, body string, created time.Time, externalID string) error {
+	if len(body) > 2000 {
+		body = body[:2000]
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO pr_comments(pull_request_id, author_contributor_id, body_preview, created_at, external_id)
+		VALUES ($1,$2,$3,$4,$5)
+		ON CONFLICT (pull_request_id, external_id) DO UPDATE SET
+		  body_preview=EXCLUDED.body_preview
+	`, prID, authorID, body, created, externalID)
+	return err
+}
+
+func (s *Store) ClearArchitectureSignals(ctx context.Context, repositoryID int64) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM architecture_signals WHERE repository_id=$1`, repositoryID)
+	return err
+}
+
+func (s *Store) InsertArchitectureSignal(ctx context.Context, repositoryID int64, fileID *int64, signalType, summary string, confidence float64, sourceKind string, sourceID *uuid.UUID, meta map[string]any) error {
+	raw, _ := json.Marshal(meta)
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO architecture_signals(repository_id, file_id, signal_type, summary, confidence, source_kind, source_id, metadata)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)
+	`, repositoryID, fileID, signalType, summary, confidence, sourceKind, sourceID, string(raw))
+	return err
+}
+
+func (s *Store) ListArchitectureSignals(ctx context.Context, repositoryID int64, limit int, minConfidence float64) ([]ArchitectureSignal, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if minConfidence <= 0 {
+		minConfidence = 0.7
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT s.id::text, s.file_id, COALESCE(f.relative_path,''), s.signal_type, s.summary, s.confidence,
+		       s.source_kind, COALESCE(s.metadata->>'sourceLabel',''), s.extracted_at::text
+		FROM architecture_signals s
+		LEFT JOIN files f ON f.id = s.file_id
+		WHERE s.repository_id=$1 AND s.confidence >= $2
+		ORDER BY s.confidence DESC, s.extracted_at DESC
+		LIMIT $3
+	`, repositoryID, minConfidence, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ArchitectureSignal
+	for rows.Next() {
+		var sig ArchitectureSignal
+		var fileID *int64
+		if err := rows.Scan(&sig.ID, &fileID, &sig.Path, &sig.SignalType, &sig.Summary, &sig.Confidence, &sig.SourceKind, &sig.SourceLabel, &sig.ExtractedAt); err != nil {
+			return nil, err
+		}
+		sig.FileID = fileID
+		out = append(out, sig)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) EngineeringMemoryReady(ctx context.Context, repositoryID int64) (bool, error) {
+	var signalCount int
+	_ = s.pool.QueryRow(ctx, `SELECT count(*)::int FROM architecture_signals WHERE repository_id=$1`, repositoryID).Scan(&signalCount)
+	if signalCount > 0 {
+		return true, nil
+	}
+	var status string
+	err := s.pool.QueryRow(ctx, `
+		SELECT status FROM socio_ingestion_runs
+		WHERE repository_id=$1 AND phase=$2
+		ORDER BY created_at DESC LIMIT 1
+	`, repositoryID, PhaseEngineering).Scan(&status)
+	if err == pgx.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return status == StatusCompleted || status == StatusPartial, nil
+}
+
 func MapChangeKind(status string) string {
 	switch status {
 	case "added":

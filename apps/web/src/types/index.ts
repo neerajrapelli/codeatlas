@@ -35,9 +35,42 @@ export type SidebarView =
   | 'hotspots'
   | 'signals'
   | 'ownership'
-  | 'timeline'
+  | 'teams'
+  | 'docs'
+  | 'onboarding'
   | 'drift'
-  | 'mcp';
+  | 'mcp'
+  | 'settings';
+
+export interface TeamRow {
+  id: string;
+  displayName: string;
+  color: string;
+  fileCount: number;
+}
+
+export interface BoundaryViolationRow {
+  sourceFile: string;
+  targetFile: string;
+  sourceTeam: string;
+  targetTeam: string;
+  message?: string;
+}
+
+export interface OnboardingPlan {
+  role?: string;
+  team?: string;
+  week_1?: OnboardingWeek;
+  week_2?: OnboardingWeek;
+  week_3_to_4?: OnboardingWeek;
+}
+
+export interface OnboardingWeek {
+  goal: string;
+  start_here?: { file_path: string; reason: string; priority?: number }[];
+  understand_these?: string[];
+  avoid_for_now?: { file_path: string; reason: string }[];
+}
 
 export type FileType = 'ts' | 'go' | 'css' | 'test' | 'config' | 'other';
 

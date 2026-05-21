@@ -7,6 +7,7 @@ export function StatusBar({ onClick }: { onClick: () => void }) {
   const ingestionStatus = useStore((s) => s.ingestionStatus);
   const hotspots = useStore((s) => s.hotspots);
   const clusterLayer = useStore((s) => s.clusterLayer);
+  const apiStatus = useStore((s) => s.apiStatus);
 
   const repo = repositories.find((r) => r.id === activeRepoId);
   const indexing = repo && repo.status !== 'ready' && repo.status !== 'failed';
@@ -34,24 +35,37 @@ export function StatusBar({ onClick }: { onClick: () => void }) {
           ? 'running'
           : 'queued';
 
+  const apiLabel =
+    apiStatus === 'online'
+      ? 'API online'
+      : apiStatus === 'degraded'
+        ? 'API degraded'
+        : apiStatus === 'checking'
+          ? 'API…'
+          : 'API offline';
+
   return (
     <footer className="status-bar" onClick={onClick} role="status">
       <div className="status-bar__left">
+        <span className="status-bar__item">
+          <StatusDot status={apiStatus === 'online' ? 'ready' : apiStatus === 'offline' ? 'failed' : 'running'} />
+          {apiLabel}
+        </span>
         <span className="status-bar__item">
           <StatusDot status={statusKind} />
           {repo?.status === 'ready'
             ? `Ready — ${files != null ? String(files) : '—'} files · ${edges != null ? String(edges) : '—'} edges`
             : indexing
               ? `Indexing (${String(pct)}%)`
-              : '—'}
+              : repo
+                ? repo.status
+                : 'No repo'}
         </span>
         <span className="status-bar__item">⚠ {String(hotspots.length)} hotspots</span>
         <span className="status-bar__item">⬡ {nodeLabel}</span>
       </div>
       <div className="status-bar__right">
-        <span>Go API ✓</span>
-        <span>pgvector ✓</span>
-        <span>TypeScript</span>
+        <span>⌘K commands · ⌘P files · ⌘⇧P palette</span>
       </div>
     </footer>
   );

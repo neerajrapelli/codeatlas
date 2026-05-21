@@ -41,6 +41,31 @@ const (
 	StepComputeMetrics  = "compute_file_metrics"
 )
 
+// Phase 2 steps (engineering memory).
+const (
+	StepSyncIssues        = "sync_issues"
+	StepSyncPRDiscussions = "sync_pr_discussions"
+	StepExtractSignals    = "extract_architecture_signals"
+)
+
+type ArchitectureSignal struct {
+	ID          string  `json:"id"`
+	FileID      *int64  `json:"fileId,omitempty"`
+	Path        string  `json:"path,omitempty"`
+	SignalType  string  `json:"signalType"`
+	Summary     string  `json:"summary"`
+	Confidence  float64 `json:"confidence"`
+	SourceKind  string  `json:"sourceKind"`
+	SourceLabel string  `json:"sourceLabel,omitempty"`
+	ExtractedAt string  `json:"extractedAt"`
+}
+
+type PullRequestRef struct {
+	ID     uuid.UUID
+	Number int
+	Title  string
+}
+
 type Contributor struct {
 	ID           uuid.UUID `json:"id"`
 	RepositoryID int64     `json:"repositoryId"`

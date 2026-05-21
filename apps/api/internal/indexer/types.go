@@ -43,6 +43,7 @@ type ProgressEvent struct {
 type ScannedFile struct {
 	AbsolutePath string
 	RelativePath string
+	Language     Language
 }
 
 type SymbolKind string
@@ -51,6 +52,9 @@ const (
 	SymbolFunction  SymbolKind = "function"
 	SymbolClass     SymbolKind = "class"
 	SymbolInterface SymbolKind = "interface"
+	SymbolMethod    SymbolKind = "method"
+	SymbolStruct    SymbolKind = "struct"
+	SymbolModule    SymbolKind = "module"
 )
 
 type Symbol struct {

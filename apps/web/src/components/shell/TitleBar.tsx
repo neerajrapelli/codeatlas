@@ -1,3 +1,4 @@
+import { CommandPaletteTrigger } from '../ui/CommandPalette';
 import { useStore } from '../../store';
 import { basename } from '../../lib/fileType';
 
@@ -37,15 +38,13 @@ export function TitleBar({ onOpenPalette }: { onOpenPalette: () => void }) {
           </option>
         ))}
       </select>
+      <div className="title-bar__search-slot">
+        <CommandPaletteTrigger onOpen={onOpenPalette} />
+      </div>
       <span className="title-bar__breadcrumb" title={crumb}>
         {active ? `${active.name} / ` : ''}
         {selectedNodePath ? basename(selectedNodePath) : crumb}
       </span>
-      <div className="title-bar__actions">
-        <button type="button" className="title-bar__btn" onClick={onOpenPalette}>
-          ⌘K
-        </button>
-      </div>
     </header>
   );
 }

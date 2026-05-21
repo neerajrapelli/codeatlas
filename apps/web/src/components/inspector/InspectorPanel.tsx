@@ -4,8 +4,10 @@ import { api } from '../../lib/api';
 import { BlastRadiusSummary } from '../graph/BlastRadiusSummary';
 import { basename, detectFileType, fileTypeLabel } from '../../lib/fileType';
 import { useStore } from '../../store';
+import { EmptyState } from '../ui/EmptyState';
 import { FileTypeIcon } from '../ui/FileTypeIcon';
 import { RiskBadge } from '../ui/RiskBadge';
+import { ViewSkeleton } from '../ui/ViewSkeleton';
 
 export function InspectorPanel() {
   const inspectorOpen = useStore((s) => s.inspectorOpen);
@@ -16,19 +18,46 @@ export function InspectorPanel() {
   const fileDetail = useStore((s) => s.fileDetail);
   const setFileDetail = useStore((s) => s.setFileDetail);
   const hotspots = useStore((s) => s.hotspots);
-  const setSelectedNode = useStore((s) => s.setSelectedNode);
   const setBlastRadius = useStore((s) => s.setBlastRadius);
+  const pushToast = useStore((s) => s.pushToast);
   const [blastBusy, setBlastBusy] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   useEffect(() => {
     if (!inspectorOpen || activeRepoId == null || !selectedNodeId) {
       setFileDetail(null);
       return;
     }
-    void api.getGraphFile(activeRepoId, selectedNodeId).then(setFileDetail).catch(() => setFileDetail(null));
-  }, [inspectorOpen, activeRepoId, selectedNodeId, setFileDetail]);
+    setDetailLoading(true);
+    void api
+      .getGraphFile(activeRepoId, selectedNodeId)
+      .then(setFileDetail)
+      .catch(() => {
+        setFileDetail(null);
+        pushToast('Could not load file details from API', 'error');
+      })
+      .finally(() => setDetailLoading(false));
+  }, [inspectorOpen, activeRepoId, selectedNodeId, setFileDetail, pushToast]);
 
   if (!inspectorOpen) return null;
+
+  if (!selectedNodeId) {
+    return (
+      <aside className="inspector-panel">
+        <div className="inspector-panel__header">
+          <span>Inspector</span>
+          <button type="button" className="btn-icon" onClick={() => setInspectorOpen(false)} aria-label="Close">
+            <i className="codicon codicon-close" />
+          </button>
+        </div>
+        <EmptyState
+          icon="codicon-file"
+          title="No file selected"
+          description="Click a file node on the architecture map to inspect imports, exports, and blast radius."
+        />
+      </aside>
+    );
+  }
 
   const path = selectedNodePath ?? fileDetail?.path ?? '';
   const hot = hotspots.find((h) => String(h.fileId) === selectedNodeId);
@@ -36,51 +65,56 @@ export function InspectorPanel() {
 
   return (
     <aside className="inspector-panel">
-      <div className="inspector-section">
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <div className="graph-file-node__row">
-            <FileTypeIcon type={ft} label={fileTypeLabel(ft)} />
-            <span className="mono">{basename(path) || '—'}</span>
-          </div>
-          <button type="button" className="btn-icon" onClick={() => setInspectorOpen(false)} aria-label="Close">
-            <i className="codicon codicon-close" />
-          </button>
+      <div className="inspector-panel__header">
+        <div className="graph-file-node__row">
+          <FileTypeIcon type={ft} label={fileTypeLabel(ft)} />
+          <span className="mono inspector-panel__path">{basename(path) || '—'}</span>
         </div>
-        {hot ? (
-          <p style={{ margin: '8px 0 0', fontSize: 'var(--font-size-xs)' }}>
-            <RiskBadge level={hot.riskLevel} /> · {hot.commitCount90d} commits/90d · bus {hot.busFactor}
-          </p>
-        ) : (
-          <p className="empty-state" style={{ padding: '8px 0' }}>
-            No file metrics yet
-          </p>
-        )}
+        <button type="button" className="btn-icon" onClick={() => setInspectorOpen(false)} aria-label="Close">
+          <i className="codicon codicon-close" />
+        </button>
       </div>
 
-      <div className="inspector-section">
-        <h4>IMPORTS ({fileDetail?.imports.length ?? 0})</h4>
-        {(fileDetail?.imports ?? []).slice(0, 8).map((imp) => (
-          <div key={imp} className="mono" style={{ padding: '2px 0', cursor: 'pointer' }}>
-            → {imp}
+      {detailLoading ? (
+        <ViewSkeleton rows={3} />
+      ) : (
+        <>
+          <div className="inspector-section">
+            {hot ? (
+              <p className="inspector-meta">
+                <RiskBadge level={hot.riskLevel} /> · {hot.commitCount90d} commits/90d · bus {hot.busFactor}
+              </p>
+            ) : (
+              <p className="inspector-meta inspector-meta--muted">No socio metrics for this file yet</p>
+            )}
           </div>
-        ))}
-      </div>
 
-      <div className="inspector-section">
-        <h4>EXPORTS ({fileDetail?.exports.length ?? 0})</h4>
-        {(fileDetail?.exports ?? []).slice(0, 8).map((ex) => (
-          <div key={ex} className="mono" style={{ padding: '2px 0' }}>
-            {ex}
+          <div className="inspector-section">
+            <h4>IMPORTS ({fileDetail?.imports.length ?? 0})</h4>
+            {(fileDetail?.imports ?? []).slice(0, 12).map((imp) => (
+              <div key={imp} className="mono inspector-line">
+                → {imp}
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+
+          <div className="inspector-section">
+            <h4>EXPORTS ({fileDetail?.exports.length ?? 0})</h4>
+            {(fileDetail?.exports ?? []).slice(0, 12).map((ex) => (
+              <div key={ex} className="mono inspector-line">
+                {ex}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       <div className="inspector-section">
         <h4>BLAST RADIUS</h4>
         {path ? (
           <button
             type="button"
-            className="btn-secondary"
+            className="btn-secondary btn-primary--block"
             disabled={blastBusy || activeRepoId == null}
             onClick={() => {
               if (activeRepoId == null || !path) return;
@@ -88,21 +122,14 @@ export function InspectorPanel() {
               void api
                 .getBlastRadius(activeRepoId, path, { depth: 3 })
                 .then(setBlastRadius)
-                .catch(() => undefined)
+                .catch((e) => pushToast(e instanceof Error ? e.message : 'Blast radius failed', 'error'))
                 .finally(() => setBlastBusy(false));
             }}
           >
             {blastBusy ? 'Analyzing…' : 'Analyze blast radius'}
           </button>
-        ) : (
-          <p className="empty-state">Select a file node.</p>
-        )}
+        ) : null}
         <BlastRadiusSummary />
-      </div>
-
-      <div className="inspector-section">
-        <h4>SIGNALS</h4>
-        <p className="empty-state">Phase 2 — not ingested yet.</p>
       </div>
     </aside>
   );

@@ -1,23 +1,43 @@
-import { getApiBase } from '../apiBase';
 import type {
   ArchitectureRule,
   BlastRadiusResult,
+  BoundaryViolationRow,
   ClusterLayer,
   GraphFileDetail,
   HotspotEntry,
   IngestionStatusPayload,
+  OnboardingPlan,
   OwnershipSummary,
   Repository,
   RuleViolation,
+  TeamRow,
 } from '../types';
-
-const base = () => getApiBase();
+import { getApiBase } from '../apiBase';
+import { apiFetch, apiJson, apiPostJson } from './apiFetch';
+import { authQueryString, jsonHeaders } from './authToken';
 
 export const api = {
+  health: async (): Promise<{ status: string; service?: string }> => {
+    const res = await apiFetch('/health');
+    if (!res.ok) throw new Error(`health ${res.status}`);
+    return res.json() as Promise<{ status: string; service?: string }>;
+  },
+
+  issueToken: async (body: { subject: string; tenant_id?: string }, bootstrapSecret: string) => {
+    const res = await apiFetch('/auth/token', {
+      method: 'POST',
+      headers: { ...jsonHeaders(), 'X-Bootstrap-Secret': bootstrapSecret },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(err.error ?? `auth ${String(res.status)}`);
+    }
+    return res.json() as Promise<{ token: string; expires_in: number }>;
+  },
+
   listRepositories: async (): Promise<Repository[]> => {
-    const res = await fetch(`${base()}/repositories`);
-    if (!res.ok) throw new Error(`repositories ${res.status}`);
-    const json = (await res.json()) as { repositories?: Repository[] };
+    const json = await apiJson<{ repositories?: Repository[] }>('/repositories');
     return Array.isArray(json.repositories) ? json.repositories : [];
   },
 
@@ -27,14 +47,14 @@ export const api = {
     branch?: string;
     displayName?: string;
   }): Promise<Repository> => {
-    const res = await fetch(`${base()}/repositories`, {
+    const res = await apiFetch('/repositories', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify(body),
     });
     if (!res.ok) {
       const err = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new Error(err.error ?? `ingest ${res.status}`);
+      throw new Error(err.error ?? `ingest ${String(res.status)}`);
     }
     const json = (await res.json()) as { repository?: Repository } | Repository;
     if (json && typeof json === 'object' && 'repository' in json && json.repository) {
@@ -44,47 +64,48 @@ export const api = {
   },
 
   deleteRepository: async (id: number) => {
-    const res = await fetch(`${base()}/repositories/${String(id)}`, { method: 'DELETE' });
-    if (!res.ok) throw new Error(`delete ${res.status}`);
-    return res.json();
+    return apiJson(`/repositories/${String(id)}`, { method: 'DELETE' });
   },
 
   reindexRepository: async (id: number) => {
-    const res = await fetch(`${base()}/repositories/${String(id)}/reindex`, { method: 'POST' });
-    if (!res.ok) throw new Error(`reindex ${res.status}`);
-    return res.json();
+    return apiJson(`/repositories/${String(id)}/reindex`, { method: 'POST' });
   },
 
   getClusters: async (repositoryId: number, prefix: string): Promise<ClusterLayer> => {
-    const url = `${base()}/graph/clusters?repositoryId=${String(repositoryId)}&prefix=${encodeURIComponent(prefix)}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`clusters ${res.status}`);
-    return res.json() as Promise<ClusterLayer>;
+    const q = new URLSearchParams({
+      repositoryId: String(repositoryId),
+      prefix,
+    });
+    return apiJson<ClusterLayer>(`/graph/clusters?${q.toString()}`);
   },
 
   getGraphFile: async (repositoryId: number, fileId: string): Promise<GraphFileDetail> => {
-    const res = await fetch(
-      `${base()}/graph/file?repositoryId=${String(repositoryId)}&fileId=${encodeURIComponent(fileId)}`,
-    );
-    if (!res.ok) throw new Error(`file ${res.status}`);
-    const raw = (await res.json()) as GraphFileDetail;
-    return raw;
+    const q = new URLSearchParams({
+      repositoryId: String(repositoryId),
+      fileId,
+    });
+    return apiJson<GraphFileDetail>(`/graph/file?${q.toString()}`);
   },
 
   getIngestionStatus: async (repositoryId: number): Promise<IngestionStatusPayload> => {
-    const res = await fetch(`${base()}/repositories/${String(repositoryId)}/ingestion/status`);
-    if (!res.ok) throw new Error(`ingestion status ${res.status}`);
-    return res.json() as Promise<IngestionStatusPayload>;
+    return apiJson<IngestionStatusPayload>(`/repositories/${String(repositoryId)}/ingestion/status`);
   },
 
-  ingestionStreamUrl: (repositoryId: number) =>
-    `${base()}/repositories/${String(repositoryId)}/ingestion/stream`,
+  ingestionStreamUrl: (repositoryId: number) => {
+    const q = authQueryString();
+    const suffix = q ? `?${q}` : '';
+    return `${getApiBase()}/repositories/${String(repositoryId)}/ingestion/stream${suffix}`;
+  },
 
   getHotspots: async (repositoryId: number, limit = 30): Promise<HotspotEntry[]> => {
-    const res = await fetch(`${base()}/repositories/${String(repositoryId)}/hotspots?limit=${String(limit)}`);
-    if (!res.ok) return [];
-    const json = (await res.json()) as { hotspots?: HotspotEntry[] };
-    return Array.isArray(json.hotspots) ? json.hotspots : [];
+    try {
+      const json = await apiJson<{ hotspots?: HotspotEntry[] }>(
+        `/repositories/${String(repositoryId)}/hotspots?limit=${String(limit)}`,
+      );
+      return Array.isArray(json.hotspots) ? json.hotspots : [];
+    } catch {
+      return [];
+    }
   },
 
   getBlastRadius: async (
@@ -95,29 +116,32 @@ export const api = {
     const params = new URLSearchParams({ file_path: filePath });
     if (opts?.symbol) params.set('symbol', opts.symbol);
     if (opts?.depth != null) params.set('depth', String(opts.depth));
-    const res = await fetch(
-      `${base()}/repositories/${String(repositoryId)}/blast-radius?${params.toString()}`,
+    return apiJson<BlastRadiusResult>(
+      `/repositories/${String(repositoryId)}/blast-radius?${params.toString()}`,
     );
-    if (!res.ok) {
-      const err = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new Error(err.error ?? `blast-radius ${res.status}`);
-    }
-    return res.json() as Promise<BlastRadiusResult>;
   },
 
   getOwnership: async (repositoryId: number, fileId?: string): Promise<OwnershipSummary[]> => {
     const q = fileId ? `?fileId=${encodeURIComponent(fileId)}` : '';
-    const res = await fetch(`${base()}/repositories/${String(repositoryId)}/ownership${q}`);
-    if (!res.ok) return [];
-    const json = (await res.json()) as { ownership?: OwnershipSummary[] };
-    return Array.isArray(json.ownership) ? json.ownership : [];
+    try {
+      const json = await apiJson<{ ownership?: OwnershipSummary[] }>(
+        `/repositories/${String(repositoryId)}/ownership${q}`,
+      );
+      return Array.isArray(json.ownership) ? json.ownership : [];
+    } catch {
+      return [];
+    }
   },
 
   listRules: async (repositoryId: number): Promise<ArchitectureRule[]> => {
-    const res = await fetch(`${base()}/repositories/${String(repositoryId)}/rules`);
-    if (!res.ok) return [];
-    const json = (await res.json()) as { rules?: ArchitectureRule[] };
-    return Array.isArray(json.rules) ? json.rules : [];
+    try {
+      const json = await apiJson<{ rules?: ArchitectureRule[] }>(
+        `/repositories/${String(repositoryId)}/rules`,
+      );
+      return Array.isArray(json.rules) ? json.rules : [];
+    } catch {
+      return [];
+    }
   },
 
   createRule: async (
@@ -132,38 +156,104 @@ export const api = {
       enabled?: boolean;
     },
   ): Promise<ArchitectureRule> => {
-    const res = await fetch(`${base()}/repositories/${String(repositoryId)}/rules`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) throw new Error(`create rule ${res.status}`);
-    const json = (await res.json()) as { rule: ArchitectureRule };
+    const json = await apiPostJson<{ rule: ArchitectureRule }>(
+      `/repositories/${String(repositoryId)}/rules`,
+      body,
+    );
     return json.rule;
   },
 
   deleteRule: async (repositoryId: number, ruleId: string) => {
-    const res = await fetch(
-      `${base()}/repositories/${String(repositoryId)}/rules/${encodeURIComponent(ruleId)}`,
-      { method: 'DELETE' },
-    );
-    if (!res.ok) throw new Error(`delete rule ${res.status}`);
+    await apiFetch(`/repositories/${String(repositoryId)}/rules/${encodeURIComponent(ruleId)}`, {
+      method: 'DELETE',
+    });
   },
 
   getViolations: async (repositoryId: number): Promise<RuleViolation[]> => {
-    const res = await fetch(`${base()}/repositories/${String(repositoryId)}/violations`);
-    if (!res.ok) return [];
-    const json = (await res.json()) as { violations?: RuleViolation[] };
-    return Array.isArray(json.violations) ? json.violations : [];
+    try {
+      const json = await apiJson<{ violations?: RuleViolation[] }>(
+        `/repositories/${String(repositoryId)}/violations`,
+      );
+      return Array.isArray(json.violations) ? json.violations : [];
+    } catch {
+      return [];
+    }
   },
 
   validateRules: async (repositoryId: number): Promise<RuleViolation[]> => {
-    const res = await fetch(`${base()}/repositories/${String(repositoryId)}/rules/validate`, {
-      method: 'POST',
-    });
-    if (!res.ok) throw new Error(`validate ${res.status}`);
-    const json = (await res.json()) as { violations?: RuleViolation[] };
+    const json = await apiPostJson<{ violations?: RuleViolation[] }>(
+      `/repositories/${String(repositoryId)}/rules/validate`,
+      {},
+    );
     return Array.isArray(json.violations) ? json.violations : [];
+  },
+
+  listTeams: async (repositoryId: number): Promise<TeamRow[]> => {
+    try {
+      const json = await apiJson<{ teams?: TeamRow[] }>(`/repositories/${String(repositoryId)}/teams`);
+      return Array.isArray(json.teams) ? json.teams : [];
+    } catch {
+      return [];
+    }
+  },
+
+  getBoundaryViolations: async (repositoryId: number): Promise<BoundaryViolationRow[]> => {
+    try {
+      const json = await apiJson<{ violations?: BoundaryViolationRow[] }>(
+        `/repositories/${String(repositoryId)}/boundary-violations`,
+      );
+      return Array.isArray(json.violations) ? json.violations : [];
+    } catch {
+      return [];
+    }
+  },
+
+  getOwnershipGaps: async (repositoryId: number) => {
+    try {
+      const json = await apiJson<{ gaps?: { filePath: string; message?: string }[] }>(
+        `/repositories/${String(repositoryId)}/ownership-gaps`,
+      );
+      return Array.isArray(json.gaps) ? json.gaps : [];
+    } catch {
+      return [];
+    }
+  },
+
+  generateOnboardingPlan: async (
+    repositoryId: number,
+    body: { role: string; team?: string; experience_level: string },
+  ): Promise<OnboardingPlan> => {
+    return apiPostJson<OnboardingPlan>(
+      `/repositories/${String(repositoryId)}/onboarding-plan`,
+      body,
+    );
+  },
+
+  getC4Diagram: async (repositoryId: number, level: string, scope?: string) => {
+    const params = new URLSearchParams({ level });
+    if (scope) params.set('scope', scope);
+    return apiJson<{ mermaid: string; level: string }>(
+      `/repositories/${String(repositoryId)}/docs/c4-diagram?${params.toString()}`,
+    );
+  },
+
+  getArchADRs: async (repositoryId: number) => {
+    try {
+      const json = await apiJson<{ adrs?: { title: string; body: string }[] }>(
+        `/repositories/${String(repositoryId)}/docs/adrs`,
+      );
+      return Array.isArray(json.adrs) ? json.adrs : [];
+    } catch {
+      return [];
+    }
+  },
+
+  exportDocs: async (repositoryId: number) => {
+    const res = await apiFetch(
+      `/repositories/${String(repositoryId)}/docs/export?format=markdown`,
+    );
+    if (!res.ok) throw new Error(`export ${String(res.status)}`);
+    return res.text();
   },
 
   chatStream: async (
@@ -176,14 +266,14 @@ export const api = {
       error?: string;
     }) => void,
   ) => {
-    const res = await fetch(`${base()}/ai/chat`, {
+    const res = await apiFetch('/ai/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({ repositoryId, ...body, stream: true }),
     });
     if (!res.ok && !(res.headers.get('content-type') ?? '').includes('text/event-stream')) {
       const err = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new Error(err.error ?? `chat ${res.status}`);
+      throw new Error(err.error ?? `chat ${String(res.status)}`);
     }
     if (!res.body) throw new Error('no stream body');
     const reader = res.body.getReader();

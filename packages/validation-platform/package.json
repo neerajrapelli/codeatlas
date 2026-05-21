@@ -1,0 +1,37 @@
+{
+  "name": "@codeatlas/validation-platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Autonomous repository analysis and validation platform (Phase 1: architecture engine)",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "codeatlas-validate": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rimraf dist",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "lint": "eslint src",
+    "analyze": "node dist/cli.js analyze",
+    "analyze:payload": "node dist/cli.js --repo ../payload --out ./out/payload"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "eslint": "^9.17.0",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.2",
+    "vitest": "^3.0.5"
+  }
+}

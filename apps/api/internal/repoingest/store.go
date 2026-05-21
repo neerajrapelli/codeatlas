@@ -23,14 +23,18 @@ func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 func (s *Store) Create(ctx context.Context, repo Repository) (Repository, error) {
 	var out Repository
 	var metadataRaw []byte
+	tenantID := repo.TenantID
+	if tenantID == "" {
+		tenantID = "default"
+	}
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO repositories(name, root_path, source_type, source_url, branch, workspace_path, status, current_stage, error_details)
-		VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),$6,$7,$8,NULLIF($9,''))
+		INSERT INTO repositories(name, root_path, source_type, source_url, branch, workspace_path, status, current_stage, error_details, tenant_id)
+		VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),$6,$7,$8,NULLIF($9,''),$10)
 		RETURNING
 		  id,name,source_type,COALESCE(source_url,''),COALESCE(branch,''),workspace_path,status,current_stage,
 		  progress_percent,files_indexed,symbols_indexed,edges_indexed,embeddings_indexed,stage_metadata,
 		  COALESCE(error_details,''),created_at,updated_at
-	`, repo.Name, repo.WorkspacePath, repo.SourceType, repo.SourceURL, repo.Branch, repo.WorkspacePath, repo.Status, repo.Status, repo.ErrorDetails).Scan(
+	`, repo.Name, repo.WorkspacePath, repo.SourceType, repo.SourceURL, repo.Branch, repo.WorkspacePath, repo.Status, repo.Status, repo.ErrorDetails, tenantID).Scan(
 		&out.ID, &out.Name, &out.SourceType, &out.SourceURL, &out.Branch, &out.WorkspacePath, &out.Status, &out.CurrentStage,
 		&out.ProgressPercent, &out.FilesIndexed, &out.SymbolsIndexed, &out.EdgesIndexed, &out.EmbeddingsIndexed, &metadataRaw,
 		&out.ErrorDetails, &out.CreatedAt, &out.UpdatedAt,
@@ -39,6 +43,7 @@ func (s *Store) Create(ctx context.Context, repo Repository) (Repository, error)
 		return Repository{}, fmt.Errorf("insert repository: %w", err)
 	}
 	_ = json.Unmarshal(metadataRaw, &out.StageMetadata)
+	out.TenantID = tenantID
 	return out, nil
 }
 
@@ -140,17 +145,22 @@ func (s *Store) DeleteFilesForRepository(ctx context.Context, repositoryID int64
 	return nil
 }
 
-func (s *Store) ListRecent(ctx context.Context, limit int) ([]Repository, error) {
+func (s *Store) ListRecent(ctx context.Context, tenantID string, limit int) ([]Repository, error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	rows, err := s.pool.Query(ctx, `
+	baseSelect := `
 		SELECT id,name,COALESCE(source_type,''),COALESCE(source_url,''),COALESCE(branch,''),COALESCE(workspace_path,''),status,current_stage,progress_percent,
-		       files_indexed,symbols_indexed,edges_indexed,embeddings_indexed,stage_metadata,COALESCE(error_details,''),created_at,updated_at
-		FROM repositories
-		ORDER BY created_at DESC
-		LIMIT $1
-	`, limit)
+		       files_indexed,symbols_indexed,edges_indexed,embeddings_indexed,stage_metadata,COALESCE(error_details,''),created_at,updated_at,
+		       COALESCE(tenant_id,'')
+		FROM repositories`
+	var rows pgx.Rows
+	var err error
+	if tenantID == "" {
+		rows, err = s.pool.Query(ctx, baseSelect+` ORDER BY created_at DESC LIMIT $1`, limit)
+	} else {
+		rows, err = s.pool.Query(ctx, baseSelect+` WHERE tenant_id = $2 ORDER BY created_at DESC LIMIT $1`, limit, tenantID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("list repositories: %w", err)
 	}
@@ -160,7 +170,7 @@ func (s *Store) ListRecent(ctx context.Context, limit int) ([]Repository, error)
 		var r Repository
 		var metadataRaw []byte
 		if err := rows.Scan(&r.ID, &r.Name, &r.SourceType, &r.SourceURL, &r.Branch, &r.WorkspacePath, &r.Status, &r.CurrentStage, &r.ProgressPercent,
-			&r.FilesIndexed, &r.SymbolsIndexed, &r.EdgesIndexed, &r.EmbeddingsIndexed, &metadataRaw, &r.ErrorDetails, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			&r.FilesIndexed, &r.SymbolsIndexed, &r.EdgesIndexed, &r.EmbeddingsIndexed, &metadataRaw, &r.ErrorDetails, &r.CreatedAt, &r.UpdatedAt, &r.TenantID); err != nil {
 			return nil, fmt.Errorf("scan repository: %w", err)
 		}
 		_ = json.Unmarshal(metadataRaw, &r.StageMetadata)

@@ -19,6 +19,7 @@ func ParseTypeScript(source []byte) (ParsedFile, error) {
 		return ParsedFile{}, fmt.Errorf("write temp: %w", err)
 	}
 
-	parser := NewTreeSitterTypeScriptParser()
-	return parser.Parse(ScannedFile{AbsolutePath: file, RelativePath: "input.ts"})
+	lang, _ := LanguageForPath("input.ts")
+	parser := NewTreeSitterParser()
+	return parser.Parse(ScannedFile{AbsolutePath: file, RelativePath: "input.ts", Language: lang})
 }

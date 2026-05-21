@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-import { getApiBase } from '../apiBase';
+import { api } from '../lib/api';
 
 export interface IngestionStep {
   name: string;
@@ -32,8 +32,8 @@ export function useIngestionProgress(repoId: string | number | null) {
       return;
     }
 
-    const base = getApiBase();
-    const es = new EventSource(`${base}/repositories/${String(repoId)}/ingestion/stream`);
+    const id = typeof repoId === 'number' ? repoId : Number(repoId);
+    const es = new EventSource(api.ingestionStreamUrl(id));
 
     es.onmessage = (e: MessageEvent<string>) => {
       try {
