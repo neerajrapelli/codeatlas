@@ -77,7 +77,7 @@ export function AppShell() {
         setSelectedNode(null, null);
       }
       if (mod && e.key >= '1' && e.key <= '6') {
-        const views = ['repos', 'map', 'hotspots', 'signals', 'ownership', 'timeline'] as const;
+        const views = ['repos', 'map', 'hotspots', 'signals', 'ownership', 'drift', 'mcp', 'timeline'] as const;
         const i = Number(e.key) - 1;
         if (views[i]) setSidebarView(views[i]);
       }

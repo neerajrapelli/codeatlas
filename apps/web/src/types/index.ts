@@ -29,7 +29,15 @@ export interface Repository {
   updatedAt: string;
 }
 
-export type SidebarView = 'repos' | 'map' | 'hotspots' | 'signals' | 'ownership' | 'timeline';
+export type SidebarView =
+  | 'repos'
+  | 'map'
+  | 'hotspots'
+  | 'signals'
+  | 'ownership'
+  | 'timeline'
+  | 'drift'
+  | 'mcp';
 
 export type FileType = 'ts' | 'go' | 'css' | 'test' | 'config' | 'other';
 
@@ -163,4 +171,30 @@ export interface BlastRadiusResult {
   blast_radius: BlastRadiusSummary;
   files: BlastRadiusAffectedFile[];
   warnings: string[];
+}
+
+export type ArchitectureRuleType = 'no_import' | 'must_import' | 'layer_order' | 'no_circular';
+
+export interface ArchitectureRule {
+  id: string;
+  repositoryId: number;
+  name: string;
+  description?: string;
+  ruleType: ArchitectureRuleType;
+  sourcePattern: string;
+  targetPattern: string;
+  severity: 'error' | 'warning' | 'info';
+  enabled: boolean;
+  createdAt: string;
+}
+
+export interface RuleViolation {
+  id?: string;
+  ruleId: string;
+  ruleName: string;
+  sourceFile: string;
+  targetFile: string;
+  severity: 'error' | 'warning' | 'info';
+  message: string;
+  detectedAt?: string;
 }

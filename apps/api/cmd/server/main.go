@@ -12,6 +12,11 @@ import (
 
 	"codeatlas/apps/api/internal/ai"
 	"codeatlas/apps/api/internal/blastradius"
+	"codeatlas/apps/api/internal/driftdetector"
+	"codeatlas/apps/api/internal/livingdocs"
+	"codeatlas/apps/api/internal/mcp"
+	"codeatlas/apps/api/internal/onboarding"
+	"codeatlas/apps/api/internal/teams"
 	"codeatlas/apps/api/internal/ai/providers"
 	anthropicprovider "codeatlas/apps/api/internal/ai/providers/anthropic"
 	geminiprovider "codeatlas/apps/api/internal/ai/providers/gemini"
@@ -82,6 +87,10 @@ func main() {
 
 	broadcaster := ingestprogress.NewBroadcaster()
 	ingestQueue := jobqueue.NewPostgresQueue(pool)
+	blastSvc := blastradius.NewService(pool)
+	driftEngine := driftdetector.NewEngine(pool)
+	driftStore := driftdetector.NewStore(pool)
+	teamsSvc := teams.NewService(pool)
 	ingestService := repoingest.NewService(
 		cfg.WorkspaceRoot,
 		repoingest.NewStore(pool),
@@ -89,6 +98,8 @@ func main() {
 		socioIngest,
 		ingestQueue,
 		broadcaster,
+		driftEngine,
+		teamsSvc,
 		logger,
 		cfg.ZipMaxBytes,
 		cfg.ZipMaxFiles,
@@ -100,8 +111,10 @@ func main() {
 
 	jobqueue.StartWorker(ctx, ingestQueue, ingestRunner, logger)
 
-	blastSvc := blastradius.NewService(pool)
-	srv := httpserver.New(cfg, pool, aiService, ingestService, ingestQueue, socioQuery, blastSvc)
+	mcpServer := mcp.NewServer(pool, blastSvc, driftEngine, socioQuery)
+	onboardingSvc := onboarding.NewService(aiService)
+	livingDocsSvc := livingdocs.NewService(pool)
+	srv := httpserver.New(cfg, pool, aiService, ingestService, ingestQueue, socioQuery, blastSvc, driftEngine, driftStore, mcpServer, teamsSvc, onboardingSvc, livingDocsSvc)
 
 	go func() {
 		slog.Info("http_listening", "addr", cfg.HTTPAddr)

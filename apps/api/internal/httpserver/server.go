@@ -17,11 +17,17 @@ import (
 	"codeatlas/apps/api/internal/ai"
 	"codeatlas/apps/api/internal/blastradius"
 	"codeatlas/apps/api/internal/config"
+	"codeatlas/apps/api/internal/driftdetector"
+	"codeatlas/apps/api/internal/livingdocs"
+	"codeatlas/apps/api/internal/mcp"
+	"codeatlas/apps/api/internal/onboarding"
+	"codeatlas/apps/api/internal/teams"
 	"codeatlas/apps/api/internal/graphhierarchy"
 	"codeatlas/apps/api/internal/ingestprogress"
 	"codeatlas/apps/api/internal/jobqueue"
 	"codeatlas/apps/api/internal/repoingest"
 	"codeatlas/apps/api/internal/socio"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -41,8 +47,18 @@ func New(
 	ingestQueue jobqueue.JobQueue,
 	socioQuery *socio.QueryService,
 	blastSvc *blastradius.Service,
+	driftEngine *driftdetector.Engine,
+	driftStore *driftdetector.Store,
+	mcpServer *mcp.Server,
+	teamsSvc *teams.Service,
+	onboardingSvc *onboarding.Service,
+	livingDocs *livingdocs.Service,
 ) *http.Server {
 	mux := http.NewServeMux()
+
+	if mcpServer != nil {
+		mcpServer.Register(mux)
+	}
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -380,6 +396,344 @@ func New(
 			return
 		}
 		writeJSON(w, http.StatusOK, result)
+	})
+
+	mux.HandleFunc("POST /repositories/{id}/rules", func(w http.ResponseWriter, r *http.Request) {
+		if driftStore == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "drift detection unavailable"})
+			return
+		}
+		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || repoID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+			return
+		}
+		var req driftdetector.CreateRuleRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		if req.Name == "" || req.RuleType == "" || req.SourcePattern == "" || req.TargetPattern == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name, ruleType, sourcePattern, and targetPattern are required"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		rule, err := driftStore.CreateRule(ctx, repoID, req)
+		if err != nil {
+			slog.Error("create_rule_failed", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create rule"})
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"rule": rule})
+	})
+
+	mux.HandleFunc("GET /repositories/{id}/rules", func(w http.ResponseWriter, r *http.Request) {
+		if driftStore == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "drift detection unavailable"})
+			return
+		}
+		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || repoID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		rules, err := driftStore.ListRules(ctx, repoID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list rules"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"rules": rules})
+	})
+
+	mux.HandleFunc("DELETE /repositories/{id}/rules/{rule_id}", func(w http.ResponseWriter, r *http.Request) {
+		if driftStore == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "drift detection unavailable"})
+			return
+		}
+		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || repoID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+			return
+		}
+		ruleID, err := uuid.Parse(r.PathValue("rule_id"))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid rule_id"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		if err := driftStore.DeleteRule(ctx, repoID, ruleID); err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete rule"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	})
+
+	mux.HandleFunc("GET /repositories/{id}/violations", func(w http.ResponseWriter, r *http.Request) {
+		if driftStore == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "drift detection unavailable"})
+			return
+		}
+		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || repoID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		violations, err := driftStore.ListActiveViolations(ctx, repoID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list violations"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"violations": violations})
+	})
+
+	mux.HandleFunc("POST /repositories/{id}/rules/validate", func(w http.ResponseWriter, r *http.Request) {
+		if driftEngine == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "drift detection unavailable"})
+			return
+		}
+		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || repoID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		defer cancel()
+		violations, err := driftEngine.ValidateAll(ctx, repoID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "validation failed"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"violations": violations})
+	})
+
+	mux.HandleFunc("POST /repositories/{id}/check-pr", func(w http.ResponseWriter, r *http.Request) {
+		if driftEngine == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "drift detection unavailable"})
+			return
+		}
+		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || repoID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+			return
+		}
+		var req driftdetector.CheckPRRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		violations, err := driftEngine.CheckChangedFiles(ctx, repoID, req.ChangedFiles)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "check failed"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"violations": violations})
+	})
+
+	mux.HandleFunc("GET /repositories/{id}/teams", func(w http.ResponseWriter, r *http.Request) {
+		if teamsSvc == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "teams unavailable"})
+			return
+		}
+		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || repoID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		list, err := teamsSvc.ListTeams(ctx, repoID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list teams"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"teams": list})
+	})
+
+	mux.HandleFunc("GET /repositories/{id}/teams/{team_id}/files", func(w http.ResponseWriter, r *http.Request) {
+		if teamsSvc == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "teams unavailable"})
+			return
+		}
+		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		teamID, err2 := uuid.Parse(r.PathValue("team_id"))
+		if err != nil || repoID <= 0 || err2 != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		files, err := teamsSvc.TeamFiles(ctx, repoID, teamID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list team files"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"files": files})
+	})
+
+	mux.HandleFunc("GET /repositories/{id}/boundary-violations", func(w http.ResponseWriter, r *http.Request) {
+		if teamsSvc == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "teams unavailable"})
+			return
+		}
+		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || repoID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		v, err := teamsSvc.BoundaryViolations(ctx, repoID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load violations"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"violations": v})
+	})
+
+	mux.HandleFunc("GET /repositories/{id}/ownership-gaps", func(w http.ResponseWriter, r *http.Request) {
+		if teamsSvc == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "teams unavailable"})
+			return
+		}
+		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || repoID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		gaps, err := teamsSvc.OwnershipGaps(ctx, repoID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load gaps"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"gaps": gaps})
+	})
+
+	mux.HandleFunc("POST /repositories/{id}/onboarding-plan", func(w http.ResponseWriter, r *http.Request) {
+		if onboardingSvc == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "onboarding unavailable"})
+			return
+		}
+		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || repoID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+			return
+		}
+		var req onboarding.PlanRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		if req.Role == "" {
+			req.Role = "backend"
+		}
+		if req.ExperienceLevel == "" {
+			req.ExperienceLevel = "mid"
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+		defer cancel()
+		plan, err := onboardingSvc.Generate(ctx, repoID, req)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to generate plan"})
+			return
+		}
+		writeJSON(w, http.StatusOK, plan)
+	})
+
+	mux.HandleFunc("GET /repositories/{id}/docs/c4-diagram", func(w http.ResponseWriter, r *http.Request) {
+		if livingDocs == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "docs unavailable"})
+			return
+		}
+		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || repoID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+			return
+		}
+		level := r.URL.Query().Get("level")
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		md, err := livingDocs.C4Diagram(ctx, repoID, level)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to generate diagram"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"mermaid": md, "level": level})
+	})
+
+	mux.HandleFunc("GET /repositories/{id}/docs/adrs", func(w http.ResponseWriter, r *http.Request) {
+		if livingDocs == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "docs unavailable"})
+			return
+		}
+		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || repoID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		adrs, err := livingDocs.ADRs(ctx, repoID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load ADRs"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"adrs": adrs})
+	})
+
+	mux.HandleFunc("GET /repositories/{id}/docs/diff", func(w http.ResponseWriter, r *http.Request) {
+		if livingDocs == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "docs unavailable"})
+			return
+		}
+		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || repoID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		diff, err := livingDocs.Diff(ctx, repoID, r.URL.Query().Get("since"))
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to diff"})
+			return
+		}
+		writeJSON(w, http.StatusOK, diff)
+	})
+
+	mux.HandleFunc("GET /repositories/{id}/docs/export", func(w http.ResponseWriter, r *http.Request) {
+		if livingDocs == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "docs unavailable"})
+			return
+		}
+		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || repoID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		md, err := livingDocs.ExportMarkdown(ctx, repoID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to export"})
+			return
+		}
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(md))
 	})
 
 	mux.HandleFunc("GET /repositories/{id}/progress", func(w http.ResponseWriter, r *http.Request) {

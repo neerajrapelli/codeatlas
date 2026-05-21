@@ -1,5 +1,5 @@
 import ELK from 'elkjs/lib/elk.bundled.js';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { MouseEvent } from 'react';
 import ReactFlow, {
   Background,
@@ -65,6 +65,7 @@ async function layoutLayer(
     targetPath: string | null;
     depthByPath: Record<string, number>;
   },
+  violationSeverity: Record<string, 'error' | 'warning' | 'info'>,
 ): Promise<{ nodes: Node[]; edges: Edge[] }> {
   const rfNodes: Node[] = [];
   const children: Array<{ id: string; width: number; height: number }> = [];
@@ -88,6 +89,7 @@ async function layoutLayer(
       blast.active &&
       (isTarget || blastDepth != null);
     const dim = blast.active && !inBlast;
+    const viol = violationSeverity[f.path];
     children.push({ id: nid, width: 180, height: 52 });
     rfNodes.push({
       id: nid,
@@ -104,6 +106,7 @@ async function layoutLayer(
         dim,
         blastDepth: blastDepth ?? (isTarget ? 0 : undefined),
         blastTarget: isTarget,
+        violationSeverity: viol,
       },
       selected: selectedId === f.id,
     });
@@ -185,6 +188,22 @@ export function GraphCanvas() {
   } | null>(null);
   const [blastLoading, setBlastLoading] = useState(false);
 
+  const ruleViolations = useStore((s) => s.ruleViolations);
+  const violationSeverity = useMemo(() => {
+    const m: Record<string, 'error' | 'warning' | 'info'> = {};
+    for (const v of ruleViolations) {
+      const cur = m[v.sourceFile];
+      if (!cur || (v.severity === 'error') || (v.severity === 'warning' && cur === 'info')) {
+        m[v.sourceFile] = v.severity;
+      }
+      const curT = m[v.targetFile];
+      if (!curT || v.severity === 'error' || (v.severity === 'warning' && curT === 'info')) {
+        m[v.targetFile] = v.severity;
+      }
+    }
+    return m;
+  }, [ruleViolations]);
+
   const blastOverlay = {
     active: blastRadius != null,
     targetPath: blastTargetPath,
@@ -214,7 +233,14 @@ export function GraphCanvas() {
         if (ac.signal.aborted) return;
         setClusterLayer(layer);
         const overlays = layer.socioOverlay?.fileOverlays ?? {};
-        const laid = await layoutLayer(layer, overlays, highlightedFileIds, selectedNodeId, blastOverlay);
+        const laid = await layoutLayer(
+          layer,
+          overlays,
+          highlightedFileIds,
+          selectedNodeId,
+          blastOverlay,
+          violationSeverity,
+        );
         if (ac.signal.aborted) return;
         setNodes(laid.nodes);
         setEdges(laid.edges);
@@ -234,11 +260,31 @@ export function GraphCanvas() {
     const layer = useStore.getState().clusterLayer;
     if (!layer || activeRepoId == null) return;
     const overlays = layer.socioOverlay?.fileOverlays ?? {};
-    void layoutLayer(layer, overlays, highlightedFileIds, selectedNodeId, blastOverlay).then((laid) => {
+    void layoutLayer(
+      layer,
+      overlays,
+      highlightedFileIds,
+      selectedNodeId,
+      blastOverlay,
+      violationSeverity,
+    ).then((laid) => {
       setNodes(laid.nodes);
       setEdges(laid.edges);
     });
-  }, [highlightedFileIds, selectedNodeId, activeRepoId, blastRadius, blastDepthByPath, blastTargetPath]);
+  }, [
+    highlightedFileIds,
+    selectedNodeId,
+    activeRepoId,
+    blastRadius,
+    blastDepthByPath,
+    blastTargetPath,
+    violationSeverity,
+  ]);
+
+  useEffect(() => {
+    if (activeRepoId == null) return;
+    void api.getViolations(activeRepoId).then(useStore.getState().setRuleViolations);
+  }, [activeRepoId]);
 
   const runBlastRadius = useCallback(
     async (filePath: string) => {

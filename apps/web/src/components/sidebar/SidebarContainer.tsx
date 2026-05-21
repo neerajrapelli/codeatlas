@@ -1,4 +1,6 @@
 import { useStore } from '../../store';
+import { DriftView } from './DriftView';
+import { McpView } from './McpView';
 import { HotspotsView } from './HotspotsView';
 import { OwnershipView } from './OwnershipView';
 import { RepositoriesView } from './RepositoriesView';
@@ -25,6 +27,8 @@ export function SidebarContainer() {
       {sidebarView === 'hotspots' ? <HotspotsView /> : null}
       {sidebarView === 'signals' ? <SignalsView /> : null}
       {sidebarView === 'ownership' ? <OwnershipView /> : null}
+      {sidebarView === 'drift' ? <DriftView /> : null}
+      {sidebarView === 'mcp' ? <McpView /> : null}
       {sidebarView === 'timeline' ? (
         <div className="sidebar-view">
           <h3 className="sidebar-section-title">TIMELINE</h3>

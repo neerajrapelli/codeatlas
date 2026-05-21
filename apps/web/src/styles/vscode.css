@@ -601,6 +601,111 @@ textarea {
   margin-top: 8px;
 }
 
+.graph-file-node--violation-error {
+  border-color: var(--color-error);
+  box-shadow: 0 0 0 1px var(--color-error);
+}
+
+.graph-file-node--violation-warning {
+  border-color: var(--color-warning);
+  box-shadow: 0 0 0 1px var(--color-warning);
+}
+
+.drift-rules-list,
+.drift-violations-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.drift-rules-list__item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  font-size: var(--font-size-sm);
+}
+
+.drift-violation {
+  margin-top: 10px;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+}
+
+.drift-violation__msg {
+  color: var(--text-secondary);
+  margin: 4px 0;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal {
+  background: var(--bg-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.modal label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+}
+
+.modal input,
+.modal select {
+  padding: 6px 8px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.modal__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.mcp-config-block {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-subtle);
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.mcp-tools-list,
+.mcp-logs-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+  font-size: var(--font-size-xs);
+}
+
+.mcp-tools-list li,
+.mcp-logs-list li {
+  padding: 2px 0;
+}
+
 .node-skeleton {
   width: 180px;
   height: 52px;

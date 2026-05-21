@@ -35,7 +35,7 @@ export function useIngestionProgress(repoId: string | number | null) {
     const base = getApiBase();
     const es = new EventSource(`${base}/repositories/${String(repoId)}/ingestion/stream`);
 
-    es.onmessage = (e) => {
+    es.onmessage = (e: MessageEvent<string>) => {
       try {
         const next = JSON.parse(e.data) as IngestionProgress;
         setProgress(next);
@@ -59,7 +59,9 @@ export function useIngestionProgress(repoId: string | number | null) {
       es.close();
     };
 
-    return () => es.close();
+    return () => {
+      es.close();
+    };
   }, [repoId]);
 
   return { progress, fading };

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"codeatlas/apps/api/internal/driftdetector"
+	"codeatlas/apps/api/internal/teams"
 	"codeatlas/apps/api/internal/indexer"
 	"codeatlas/apps/api/internal/ingestprogress"
 	"codeatlas/apps/api/internal/ingestion"
@@ -24,6 +26,8 @@ type Service struct {
 	socioIngest   *ingestion.Service
 	queue         jobqueue.JobQueue
 	broadcaster   *ingestprogress.Broadcaster
+	driftEngine   *driftdetector.Engine
+	teamsSvc      *teams.Service
 	sources       map[SourceType]Source
 	logger        *slog.Logger
 }
@@ -35,6 +39,8 @@ func NewService(
 	socioIngest *ingestion.Service,
 	queue jobqueue.JobQueue,
 	broadcaster *ingestprogress.Broadcaster,
+	driftEngine *driftdetector.Engine,
+	teamsSvc *teams.Service,
 	logger *slog.Logger,
 	zipMaxBytes int64,
 	zipMaxFiles int,
@@ -46,6 +52,8 @@ func NewService(
 		socioIngest:   socioIngest,
 		queue:         queue,
 		broadcaster:   broadcaster,
+		driftEngine:   driftEngine,
+		teamsSvc:      teamsSvc,
 		logger:        logger,
 		sources: map[SourceType]Source{
 			SourceGitHub:    NewGitSource(SourceGitHub),
@@ -121,6 +129,7 @@ func (s *Service) Ingest(ctx context.Context, req CreateRequest) (Repository, er
 	}
 	s.logger.Info("repository_ingestion_ready", "repository_id", repo.ID, "source_type", repo.SourceType, "workspace", workspacePath)
 	s.runSocioEnrichment(repo.ID)
+	s.runDriftValidation(repo.ID)
 	return repo, nil
 }
 
@@ -278,6 +287,7 @@ func (s *Service) processInBackground(repo Repository, req CreateRequest, src So
 	}
 	s.logger.Info("repository_ingestion_ready", "repository_id", repo.ID, "source_type", repo.SourceType, "workspace", repo.WorkspacePath)
 	s.runSocioEnrichment(repo.ID)
+	s.runDriftValidation(repo.ID)
 }
 
 func (s *Service) runSocioEnrichment(repositoryID int64) {
@@ -397,18 +407,22 @@ func (s *Service) Reindex(ctx context.Context, id int64) error {
 
 // GetIngestionStreamEvent returns the latest SSE payload for a repository.
 func (s *Service) GetIngestionStreamEvent(ctx context.Context, repositoryID int64) (ingestprogress.StreamEvent, error) {
-	if s.broadcaster != nil {
-		if ev, ok := s.broadcaster.Get(repositoryID); ok {
-			return ev, nil
-		}
-	}
 	if s.queue != nil {
 		job, err := s.queue.GetStatus(ctx, strconv.FormatInt(repositoryID, 10))
 		if err != nil {
 			return ingestprogress.StreamEvent{}, err
 		}
 		if job != nil {
-			return job.Progress, nil
+			ev := job.Progress
+			if s.broadcaster != nil {
+				s.broadcaster.Publish(repositoryID, ev)
+			}
+			return ev, nil
+		}
+	}
+	if s.broadcaster != nil {
+		if ev, ok := s.broadcaster.Get(repositoryID); ok {
+			return ev, nil
 		}
 	}
 	progress, err := s.store.GetProgress(ctx, repositoryID)
@@ -542,6 +556,7 @@ func (s *Service) processReindexBackground(repo Repository, req CreateRequest, s
 	}
 	s.logger.Info("repository_reindex_ready", "repository_id", repo.ID, "source_type", repo.SourceType, "workspace", repo.WorkspacePath)
 	s.runSocioEnrichment(repo.ID)
+	s.runDriftValidation(repo.ID)
 }
 
 func (s *Service) prepareWorkspacePath(sourceType SourceType) (string, error) {

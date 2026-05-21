@@ -6,6 +6,13 @@ export type {
   BlastRadiusSummary,
   BlastRadiusTarget,
 } from './blast';
+export type {
+  ArchitectureRule,
+  ArchitectureRuleType,
+  RuleSeverity,
+  RuleViolation,
+} from './rules';
+export type { McpManifest, McpToolCallLog } from './mcp';
 
 export type HealthStatus = 'ok' | 'degraded';
 

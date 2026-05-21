@@ -7,6 +7,8 @@ const ITEMS: Array<{ view: SidebarView; icon: string; title: string }> = [
   { view: 'hotspots', icon: 'codicon-warning', title: 'Hotspots' },
   { view: 'signals', icon: 'codicon-comment-discussion', title: 'Signals' },
   { view: 'ownership', icon: 'codicon-organization', title: 'Ownership' },
+  { view: 'drift', icon: 'codicon-shield', title: 'Architecture Drift' },
+  { view: 'mcp', icon: 'codicon-plug', title: 'MCP' },
   { view: 'timeline', icon: 'codicon-history', title: 'Timeline' },
 ];
 

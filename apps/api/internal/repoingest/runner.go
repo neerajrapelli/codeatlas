@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"codeatlas/apps/api/internal/indexer"
@@ -210,7 +211,41 @@ func (s *Service) executeIngestion(
 	s.publishComplete(ctx, job, repo.ID, durations, res.Files, res.Symbols, res.FileDependencies)
 	s.logger.Info("repository_ingestion_ready", "repository_id", repo.ID, "job_id", job.ID)
 	s.runSocioEnrichment(repo.ID)
+	s.syncCodeowners(context.Background(), repo)
+	s.runDriftValidation(repo.ID)
 	return nil
+}
+
+func (s *Service) runDriftValidation(repositoryID int64) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		if s.driftEngine != nil {
+			if _, err := s.driftEngine.ValidateAll(ctx, repositoryID); err != nil {
+				s.logger.Warn("drift_validation_failed", "repository_id", repositoryID, "error", err)
+			}
+		}
+	}()
+}
+
+func (s *Service) syncCodeowners(ctx context.Context, repo Repository) {
+	if s.teamsSvc == nil {
+		return
+	}
+	candidates := []string{
+		filepath.Join(repo.WorkspacePath, "CODEOWNERS"),
+		filepath.Join(repo.WorkspacePath, ".github", "CODEOWNERS"),
+	}
+	for _, p := range candidates {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		if err := s.teamsSvc.UpsertFromCodeowners(ctx, repo.ID, string(b)); err != nil {
+			s.logger.Warn("codeowners_sync_failed", "repository_id", repo.ID, "error", err)
+		}
+		return
+	}
 }
 
 func (s *Service) publishJobProgress(

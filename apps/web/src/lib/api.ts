@@ -1,5 +1,6 @@
 import { getApiBase } from '../apiBase';
 import type {
+  ArchitectureRule,
   BlastRadiusResult,
   ClusterLayer,
   GraphFileDetail,
@@ -7,6 +8,7 @@ import type {
   IngestionStatusPayload,
   OwnershipSummary,
   Repository,
+  RuleViolation,
 } from '../types';
 
 const base = () => getApiBase();
@@ -109,6 +111,59 @@ export const api = {
     if (!res.ok) return [];
     const json = (await res.json()) as { ownership?: OwnershipSummary[] };
     return Array.isArray(json.ownership) ? json.ownership : [];
+  },
+
+  listRules: async (repositoryId: number): Promise<ArchitectureRule[]> => {
+    const res = await fetch(`${base()}/repositories/${String(repositoryId)}/rules`);
+    if (!res.ok) return [];
+    const json = (await res.json()) as { rules?: ArchitectureRule[] };
+    return Array.isArray(json.rules) ? json.rules : [];
+  },
+
+  createRule: async (
+    repositoryId: number,
+    body: {
+      name: string;
+      ruleType: string;
+      sourcePattern: string;
+      targetPattern: string;
+      description?: string;
+      severity?: string;
+      enabled?: boolean;
+    },
+  ): Promise<ArchitectureRule> => {
+    const res = await fetch(`${base()}/repositories/${String(repositoryId)}/rules`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`create rule ${res.status}`);
+    const json = (await res.json()) as { rule: ArchitectureRule };
+    return json.rule;
+  },
+
+  deleteRule: async (repositoryId: number, ruleId: string) => {
+    const res = await fetch(
+      `${base()}/repositories/${String(repositoryId)}/rules/${encodeURIComponent(ruleId)}`,
+      { method: 'DELETE' },
+    );
+    if (!res.ok) throw new Error(`delete rule ${res.status}`);
+  },
+
+  getViolations: async (repositoryId: number): Promise<RuleViolation[]> => {
+    const res = await fetch(`${base()}/repositories/${String(repositoryId)}/violations`);
+    if (!res.ok) return [];
+    const json = (await res.json()) as { violations?: RuleViolation[] };
+    return Array.isArray(json.violations) ? json.violations : [];
+  },
+
+  validateRules: async (repositoryId: number): Promise<RuleViolation[]> => {
+    const res = await fetch(`${base()}/repositories/${String(repositoryId)}/rules/validate`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error(`validate ${res.status}`);
+    const json = (await res.json()) as { violations?: RuleViolation[] };
+    return Array.isArray(json.violations) ? json.violations : [];
   },
 
   chatStream: async (

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import type {
+  ArchitectureRule,
   BlastRadiusResult,
   ChatMessage,
   ClusterLayer,
@@ -8,6 +9,7 @@ import type {
   IngestionStatusPayload,
   OwnershipSummary,
   Repository,
+  RuleViolation,
   SidebarView,
 } from '../types';
 
@@ -74,6 +76,11 @@ interface CodeAtlasStore {
   blastTargetPath: string | null;
   setBlastRadius: (result: BlastRadiusResult | null) => void;
   clearBlastRadius: () => void;
+
+  architectureRules: ArchitectureRule[];
+  setArchitectureRules: (rules: ArchitectureRule[]) => void;
+  ruleViolations: RuleViolation[];
+  setRuleViolations: (v: RuleViolation[]) => void;
 }
 
 export const useStore = create<CodeAtlasStore>((set) => ({
@@ -171,4 +178,9 @@ export const useStore = create<CodeAtlasStore>((set) => ({
   },
   clearBlastRadius: () =>
     set({ blastRadius: null, blastDepthByPath: {}, blastTargetPath: null }),
+
+  architectureRules: [],
+  setArchitectureRules: (architectureRules) => set({ architectureRules }),
+  ruleViolations: [],
+  setRuleViolations: (ruleViolations) => set({ ruleViolations }),
 }));

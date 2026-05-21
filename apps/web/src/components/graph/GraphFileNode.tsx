@@ -12,6 +12,7 @@ export const GraphFileNode = memo(function GraphFileNode({ data, selected }: Nod
   const signals = Number(data.architectureSignals ?? 0);
   const blastDepth = data.blastDepth != null ? Number(data.blastDepth) : null;
   const dimmed = Boolean(data.dim);
+  const viol = data.violationSeverity as string | undefined;
 
   return (
     <div
@@ -23,6 +24,8 @@ export const GraphFileNode = memo(function GraphFileNode({ data, selected }: Nod
         dimmed ? 'graph-file-node--dimmed' : '',
         blastDepth != null ? `graph-file-node--blast-d${String(Math.min(blastDepth, 3))}` : '',
         data.blastTarget ? 'graph-file-node--blast-target' : '',
+        viol === 'error' ? 'graph-file-node--violation-error' : '',
+        viol === 'warning' ? 'graph-file-node--violation-warning' : '',
       ]
         .filter(Boolean)
         .join(' ')}
