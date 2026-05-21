@@ -1,154 +1,114 @@
 # CodeAtlas
 
-CodeAtlas is an **architecture intelligence** platform: it ingests repositories, builds a continuously updating **semantic graph**, and exposes that graph through APIs and a minimal UI surface.
+**Architecture intelligence for software teams** — ingest repositories, build a semantic dependency graph, enrich it with socio-technical signals (ownership, churn, hotspots), and explore impact through an interactive map and graph-grounded AI.
 
-This repository is a **pnpm + Turborepo monorepo** with a Go API, a Python AI service, shared TypeScript packages, and a Vite + React frontend.
+> **Full documentation:** [docs/README.md](docs/README.md) · [ARCHITECTURE.md](ARCHITECTURE.md) · [API_REFERENCE.md](API_REFERENCE.md)
+
+## What it does
+
+| Capability | Status |
+|------------|--------|
+| Ingest GitHub / GitLab / Bitbucket / ZIP | ✅ |
+| TypeScript parsing (Tree-sitter) | ✅ |
+| Dependency graph + cluster map UI | ✅ |
+| Semantic embeddings + Graph RAG chat (SSE) | ✅ (OpenAI recommended) |
+| GitHub history → ownership & hotspots | ✅ (`GITHUB_TOKEN`) |
+| Engineering memory / CI risk (Phase 2–3) | Schema only |
+
+**Not in scope today:** user authentication, production deploy manifests, CI workflows in-repo.
+
+## Stack
+
+- **Monorepo:** pnpm + Turborepo
+- **API:** Go 1.23, PostgreSQL, pgvector
+- **Web:** React 19, Vite, React Flow, ELK
+- **AI:** In-process Go providers (`internal/ai`); Python `apps/ai` is a health stub
+
+> **Note on apps/ai:** The Python AI service is a stub and is NOT required for local development.
+> Run `make dev` without it. Only start it if working on evaluation features.
+> See [apps/ai/README.md](apps/ai/README.md) for details.
+
+## Quick start
+
+```bash
+make install
+cp .env.example .env
+cp apps/api/.env.example apps/api/.env
+make docker-up
+make dev
+```
+
+| Service | URL |
+|---------|-----|
+| Web UI | http://localhost:5173 |
+| API | http://localhost:8080/health |
+| Postgres | localhost:5432 |
+
+Optional:
+
+```env
+# apps/api/.env
+OPENAI_API_KEY=sk-...      # embeddings + chat
+GITHUB_TOKEN=ghp_...       # socio-technical sync
+```
 
 ## Repository layout
 
 ```
 apps/
-  web/        React + TypeScript (Vite)
-  api/        Go HTTP API
-  ai/         Python AI service (FastAPI)
-
+  api/     Go HTTP API + indexer CLI
+  web/     React workspace
+  ai/      Python FastAPI (health only)
 packages/
-  shared-types/   Cross-layer types (API contracts, graph primitives)
-  graph-core/     Pure TypeScript graph helpers (used by the web surface first)
-
-infra/
-  docker/         Local dependency initialization (Postgres extensions, etc.)
+  shared-types/   API contracts
+  graph-core/     Graph helpers
+docs/             Professional documentation set
 ```
 
-## Prerequisites
-
-- **Node.js** 20+ and **pnpm** 9+
-- **Go** 1.22+
-- **Python** 3.11+ (for `apps/ai`)
-- **Docker** + Docker Compose (for local Postgres + pgvector)
-
-## Quick start
-
-### 1) Install JavaScript dependencies
+## Example API calls
 
 ```bash
-make install
+# Ingest
+curl -X POST http://localhost:8080/repositories \
+  -H "Content-Type: application/json" \
+  -d '{"sourceType":"github","sourceUrl":"https://github.com/org/repo","branch":"main"}'
+
+# Architecture chat
+curl -X POST http://localhost:8080/ai/chat \
+  -H "Content-Type: application/json" \
+  -d '{"repositoryId":1,"query":"What breaks if we change auth?"}'
 ```
 
-### 2) Environment variables
+## Documentation index
 
-Copy the example env file and adjust as needed:
-
-```bash
-cp .env.example .env
-cp apps/web/.env.example apps/web/.env.local
-```
-
-Notes:
-
-- **Root `.env`** is used by **Docker Compose** (and is a convenient place to store local `DATABASE_URL` defaults).
-- **`apps/web/.env.local`** is loaded by Vite for `VITE_*` variables.
-- **`apps/api`** can read from your shell environment or an `apps/api/.env` file if you use a local loader; see `apps/api/.env.example`.
-- **`apps/ai`** loads `apps/ai/.env` via Pydantic settings; see `apps/ai/.env.example`.
-
-### 3) Start Postgres (pgvector)
-
-Docker Compose reads a root `.env` file automatically (if present) for variable interpolation. If you have not created `.env` yet, the compose file falls back to the documented defaults.
-
-```bash
-make docker-up
-```
-
-### 4) Install Python tooling (recommended)
-
-This installs Ruff + service dependencies for local lint/dev:
-
-```bash
-make ai-sync
-```
-
-### 5) Run the whole dev stack
-
-```bash
-make dev
-```
-
-Useful Turborepo filters:
-
-```bash
-pnpm dev --filter @codeatlas/web
-pnpm dev --filter @codeatlas/api
-pnpm dev --filter @codeatlas/ai
-```
+| Topic | Link |
+|-------|------|
+| Architecture & diagrams | [docs/architecture/overview.md](docs/architecture/overview.md) |
+| Backend | [docs/backend/overview.md](docs/backend/overview.md) |
+| Frontend | [docs/frontend/overview.md](docs/frontend/overview.md) |
+| Database | [docs/database/schema.md](docs/database/schema.md) |
+| API | [docs/api/endpoints.md](docs/api/endpoints.md) |
+| Security | [docs/security/overview.md](docs/security/overview.md) |
+| Local dev | [docs/deployment/local.md](docs/deployment/local.md) |
+| Onboarding | [docs/onboarding/developer-guide.md](docs/onboarding/developer-guide.md) |
+| Troubleshooting | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) |
+| Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) |
 
 ## Common commands
 
 ```bash
+make dev          # Turbo: web + api + packages
 make build
 make lint
-make format
 make typecheck
-make clean
+make index-repo REPO=/path/to/typescript-repo
+make docker-up
 ```
 
-Python formatting/linting (optional, but recommended):
+## Windows
 
-```bash
-make ai-sync
-make lint-ruff
-```
-
-Repository ingestion (TypeScript repos only, first MVP pipeline):
-
-```bash
-make index-repo REPO=/absolute/path/to/your/typescript-repo
-```
-
-This runs `apps/api/cmd/indexer`, which:
-- recursively scans files (ignoring `node_modules`, `dist`, `build`, `.git`)
-- parses TypeScript via Tree-sitter
-- extracts imports/exports/functions/classes/interfaces
-- writes entities and graph relationships into PostgreSQL
-- optionally generates embeddings for files/symbols/import relationships when `OPENAI_API_KEY` is configured
-
-AI architecture chat:
-
-```bash
-curl -X POST http://localhost:8080/ai/chat \
-  -H "Content-Type: application/json" \
-  -d '{"repositoryId":1,"query":"What breaks if I change auth?"}'
-```
-
-Chat uses graph-aware retrieval (semantic + dependency expansion) and only sends compact retrieved context to the LLM.
-
-Repository onboarding API:
-
-```bash
-# Git-based sources (github/gitlab/bitbucket)
-curl -X POST http://localhost:8080/repositories \
-  -H "Content-Type: application/json" \
-  -d '{"sourceType":"github","sourceUrl":"https://github.com/octokit/types.ts.git","branch":"main"}'
-
-# ZIP upload
-curl -X POST http://localhost:8080/repositories \
-  -F "sourceType=zip" \
-  -F "displayName=my-zip-repo" \
-  -F "file=@/path/to/repo.zip"
-```
-
-Status lifecycle: `queued` → `cloning|extracting` → `indexing` → `ready|failed`.
-
-## Local URLs (defaults)
-
-- **Web**: `http://localhost:5173`
-- **Go API**: `http://localhost:8080/health`
-- **AI service**: `http://localhost:8001/health`
-- **Postgres**: `localhost:5432`
-
-## Makefile + Windows
-
-`Makefile` targets are written for **Make** (commonly used via **Git Bash** or **WSL** on Windows). If you do not have Make installed, use the underlying `pnpm` / `docker compose` commands shown in the `Makefile`.
+Use **Git Bash**, **WSL**, or run `pnpm` / `docker compose` commands from the Makefile manually. See [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 ## License
 
-Proprietary (update when you publish).
+Proprietary (update when published).

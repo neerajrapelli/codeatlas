@@ -1,0 +1,15 @@
+DROP TABLE IF EXISTS ci_runs;
+DROP TABLE IF EXISTS architecture_signals;
+DROP TABLE IF EXISTS issue_file_refs;
+DROP TABLE IF EXISTS issues;
+DROP TABLE IF EXISTS pr_comments;
+DROP TABLE IF EXISTS pr_reviews;
+DROP TABLE IF EXISTS socio_ingestion_steps;
+DROP TABLE IF EXISTS socio_ingestion_runs;
+DROP TABLE IF EXISTS contributor_file_ownership;
+DROP TABLE IF EXISTS file_metrics;
+DROP TABLE IF EXISTS pr_files;
+DROP TABLE IF EXISTS pull_requests;
+DROP TABLE IF EXISTS commit_files;
+DROP TABLE IF EXISTS commits;
+DROP TABLE IF EXISTS contributors;

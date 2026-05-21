@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"codeatlas/apps/api/internal/ai"
+	"codeatlas/apps/api/internal/blastradius"
 	"codeatlas/apps/api/internal/ai/providers"
 	anthropicprovider "codeatlas/apps/api/internal/ai/providers/anthropic"
 	geminiprovider "codeatlas/apps/api/internal/ai/providers/gemini"
@@ -20,10 +21,15 @@ import (
 	openrouterprovider "codeatlas/apps/api/internal/ai/providers/openrouter"
 	"codeatlas/apps/api/internal/config"
 	"codeatlas/apps/api/internal/db"
+	"codeatlas/apps/api/internal/github"
 	"codeatlas/apps/api/internal/httpserver"
 	"codeatlas/apps/api/internal/indexer"
+	"codeatlas/apps/api/internal/ingestprogress"
+	"codeatlas/apps/api/internal/ingestion"
+	"codeatlas/apps/api/internal/jobqueue"
 	"codeatlas/apps/api/internal/llm"
 	"codeatlas/apps/api/internal/repoingest"
+	"codeatlas/apps/api/internal/socio"
 )
 
 func main() {
@@ -60,7 +66,8 @@ func main() {
 	} else {
 		embedClient = llm.NewLocalClient()
 	}
-	retriever := ai.NewRetriever(pool)
+	socioStore := socio.NewStore(pool)
+	retriever := ai.NewRetriever(pool, socioStore)
 	aiService = ai.NewService(retriever, providers.ProviderName(cfg.AIDefaultProvider), cfg.AIDefaultModel, cfg.AIContextTokenBudget, providerManager, logger)
 
 	idxService := indexer.New(
@@ -69,18 +76,32 @@ func main() {
 		indexer.NewPostgresStore(pool, embedClient),
 		logger,
 	)
+	ghClient := github.NewClient(cfg.GitHubToken, logger)
+	socioIngest := ingestion.NewService(socioStore, ghClient, logger)
+	socioQuery := socio.NewQueryService(socioStore)
+
+	broadcaster := ingestprogress.NewBroadcaster()
+	ingestQueue := jobqueue.NewPostgresQueue(pool)
 	ingestService := repoingest.NewService(
 		cfg.WorkspaceRoot,
 		repoingest.NewStore(pool),
 		idxService,
+		socioIngest,
+		ingestQueue,
+		broadcaster,
 		logger,
 		cfg.ZipMaxBytes,
 		cfg.ZipMaxFiles,
 	)
+	ingestRunner := repoingest.NewRunner(ingestService)
 
-	srv := httpserver.New(cfg, pool, aiService, ingestService)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	jobqueue.StartWorker(ctx, ingestQueue, ingestRunner, logger)
+
+	blastSvc := blastradius.NewService(pool)
+	srv := httpserver.New(cfg, pool, aiService, ingestService, ingestQueue, socioQuery, blastSvc)
 
 	go func() {
 		slog.Info("http_listening", "addr", cfg.HTTPAddr)

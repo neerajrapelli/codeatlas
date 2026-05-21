@@ -1,10 +1,11 @@
-.PHONY: help install dev build lint lint-ruff format typecheck clean docker-up docker-down docker-logs db-shell ai-sync index-repo
+.PHONY: help install dev dev-full build lint lint-ruff format typecheck clean docker-up docker-down docker-logs db-shell ai-sync index-repo test test-parser test-graph
 
 help:
 	@echo "CodeAtlas development commands"
 	@echo ""
 	@echo "  make install     Install JS deps (pnpm) + sync Python tooling (optional)"
-	@echo "  make dev         Run all dev tasks via Turborepo"
+	@echo "  make dev         Run web + api only (skips Python AI stub)"
+	@echo "  make dev-full    Run all dev tasks via Turborepo (includes apps/ai)"
 	@echo "  make build       Build all packages/apps via Turborepo"
 	@echo "  make lint        Lint via Turborepo"
 	@echo "  make lint-ruff   Run Ruff on apps/ai (requires: make ai-sync)"
@@ -22,7 +23,19 @@ install:
 	pnpm install
 
 dev:
+	pnpm dev --filter @codeatlas/web --filter @codeatlas/api
+
+dev-full:
 	pnpm dev
+
+test:
+	cd apps/api && go test ./...
+
+test-parser:
+	cd apps/api && go test ./internal/indexer/...
+
+test-graph:
+	cd apps/api && go test ./internal/graphhierarchy/...
 
 build:
 	pnpm build

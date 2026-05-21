@@ -15,11 +15,17 @@ import (
 	"time"
 
 	"codeatlas/apps/api/internal/ai"
+	"codeatlas/apps/api/internal/blastradius"
 	"codeatlas/apps/api/internal/config"
 	"codeatlas/apps/api/internal/graphhierarchy"
+	"codeatlas/apps/api/internal/ingestprogress"
+	"codeatlas/apps/api/internal/jobqueue"
 	"codeatlas/apps/api/internal/repoingest"
+	"codeatlas/apps/api/internal/socio"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const defaultBlastDepth = 3
 
 type healthResponse struct {
 	Service string `json:"service"`
@@ -27,7 +33,15 @@ type healthResponse struct {
 	Version string `json:"version"`
 }
 
-func New(cfg config.Config, pool *pgxpool.Pool, aiService *ai.Service, ingestService *repoingest.Service) *http.Server {
+func New(
+	cfg config.Config,
+	pool *pgxpool.Pool,
+	aiService *ai.Service,
+	ingestService *repoingest.Service,
+	ingestQueue jobqueue.JobQueue,
+	socioQuery *socio.QueryService,
+	blastSvc *blastradius.Service,
+) *http.Server {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +87,18 @@ func New(cfg config.Config, pool *pgxpool.Pool, aiService *ai.Service, ingestSer
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to build cluster layer"})
 			return
 		}
-		writeJSON(w, http.StatusOK, layer)
+		payload := map[string]any{
+			"prefix":   layer.Prefix,
+			"clusters": layer.Clusters,
+			"files":    layer.Files,
+			"edges":    layer.Edges,
+		}
+		if socioQuery != nil {
+			if overlay, err := socioQuery.GetFileOverlays(ctx, repoID); err == nil {
+				payload["socioOverlay"] = overlay
+			}
+		}
+		writeJSON(w, http.StatusOK, payload)
 	})
 
 	mux.HandleFunc("GET /graph/file", func(w http.ResponseWriter, r *http.Request) {
@@ -148,6 +173,215 @@ func New(cfg config.Config, pool *pgxpool.Pool, aiService *ai.Service, ingestSer
 		writeJSON(w, http.StatusOK, map[string]any{"repositories": repos})
 	})
 
+	mux.HandleFunc("GET /repositories/{id}/ingestion/status", func(w http.ResponseWriter, r *http.Request) {
+		if ingestService == nil || socioQuery == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "ingestion status unavailable"})
+			return
+		}
+		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || repoID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+
+		var code socio.CodeIndexStatus
+		if ingestQueue != nil {
+			job, err := ingestQueue.GetStatus(ctx, strconv.FormatInt(repoID, 10))
+			if err != nil {
+				slog.Error("ingestion_job_status_failed", "repository_id", repoID, "error", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load ingestion job"})
+				return
+			}
+			if job != nil {
+				code = streamEventToCodeIndex(job.Progress)
+			}
+		}
+		if code.Status == "" {
+			progress, err := ingestService.GetProgress(ctx, repoID)
+			if err != nil {
+				slog.Error("ingestion_status_progress_failed", "repository_id", repoID, "error", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load ingestion status"})
+				return
+			}
+			code = socio.CodeIndexStatus{
+				Status:          string(progress.Status),
+				Stage:           string(progress.Stage),
+				ProgressPercent: progress.ProgressPercent,
+				FilesIndexed:    progress.Metrics.FilesIndexed,
+			}
+		}
+		status, err := socioQuery.BuildIngestionStatus(ctx, repoID, code)
+		if err != nil {
+			slog.Error("ingestion_status_failed", "repository_id", repoID, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to build ingestion status"})
+			return
+		}
+		writeJSON(w, http.StatusOK, status)
+	})
+
+	mux.HandleFunc("GET /repositories/{id}/ingestion/stream", func(w http.ResponseWriter, r *http.Request) {
+		if ingestService == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "ingestion status unavailable"})
+			return
+		}
+		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || repoID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+			return
+		}
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+
+		progressTicker := time.NewTicker(500 * time.Millisecond)
+		defer progressTicker.Stop()
+		heartbeatTicker := time.NewTicker(15 * time.Second)
+		defer heartbeatTicker.Stop()
+
+		lastJSON := ""
+		sendEvent := func() bool {
+			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+			defer cancel()
+			ev, err := ingestService.GetIngestionStreamEvent(ctx, repoID)
+			if err != nil {
+				return false
+			}
+			raw, err := json.Marshal(ev)
+			if err != nil {
+				return false
+			}
+			if string(raw) == lastJSON {
+				return false
+			}
+			lastJSON = string(raw)
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", raw); err != nil {
+				return true
+			}
+			flusher.Flush()
+			return ev.Status == ingestprogress.StatusComplete || ev.Status == ingestprogress.StatusFailed
+		}
+
+		if sendEvent() {
+			return
+		}
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-heartbeatTicker.C:
+				if _, err := fmt.Fprintf(w, ": heartbeat\n\n"); err != nil {
+					return
+				}
+				flusher.Flush()
+			case <-progressTicker.C:
+				if sendEvent() {
+					return
+				}
+			}
+		}
+	})
+
+	mux.HandleFunc("GET /repositories/{id}/ownership", func(w http.ResponseWriter, r *http.Request) {
+		if socioQuery == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "ownership unavailable"})
+			return
+		}
+		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || repoID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+			return
+		}
+		var fileID int64
+		if raw := r.URL.Query().Get("fileId"); raw != "" {
+			fileID, err = strconv.ParseInt(raw, 10, 64)
+			if err != nil || fileID <= 0 {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid fileId"})
+				return
+			}
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		rows, err := socioQuery.GetOwnership(ctx, repoID, fileID)
+		if err != nil {
+			slog.Error("ownership_query_failed", "repository_id", repoID, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load ownership"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ownership": rows})
+	})
+
+	mux.HandleFunc("GET /repositories/{id}/hotspots", func(w http.ResponseWriter, r *http.Request) {
+		if socioQuery == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "hotspots unavailable"})
+			return
+		}
+		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || repoID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+			return
+		}
+		limit := 25
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			if n, err := strconv.Atoi(raw); err == nil && n > 0 && n <= 100 {
+				limit = n
+			}
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		rows, err := socioQuery.GetHotspots(ctx, repoID, limit)
+		if err != nil {
+			slog.Error("hotspots_query_failed", "repository_id", repoID, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load hotspots"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"hotspots": rows})
+	})
+
+	mux.HandleFunc("GET /repositories/{id}/blast-radius", func(w http.ResponseWriter, r *http.Request) {
+		if blastSvc == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "blast radius unavailable"})
+			return
+		}
+		repoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || repoID <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+			return
+		}
+		filePath := strings.TrimSpace(r.URL.Query().Get("file_path"))
+		if filePath == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "file_path is required"})
+			return
+		}
+		symbol := strings.TrimSpace(r.URL.Query().Get("symbol"))
+		depth := defaultBlastDepth
+		if raw := r.URL.Query().Get("depth"); raw != "" {
+			if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+				depth = n
+			}
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		result, err := blastSvc.Analyze(ctx, repoID, filePath, symbol, depth)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+				return
+			}
+			slog.Error("blast_radius_failed", "repository_id", repoID, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to compute blast radius"})
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
+
 	mux.HandleFunc("GET /repositories/{id}/progress", func(w http.ResponseWriter, r *http.Request) {
 		if ingestService == nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "ingestion unavailable"})
@@ -185,13 +419,13 @@ func New(cfg config.Config, pool *pgxpool.Pool, aiService *ai.Service, ingestSer
 
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
-		repo, err := ingestService.Enqueue(ctx, req)
+		repo, jobID, err := ingestService.Enqueue(ctx, req)
 		if err != nil {
 			slog.Error("repository_ingestion_failed", "error", err, "source_type", req.SourceType, "source_url", req.SourceURL)
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusAccepted, repo)
+		writeJSON(w, http.StatusAccepted, map[string]any{"repository": repo, "jobId": jobID})
 	})
 
 	mux.HandleFunc("DELETE /repositories/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -446,6 +680,27 @@ func parseMultipartRepositoryRequest(r *http.Request, zipMaxBytes int64) (repoin
 		ZIPPath:     tmpPath,
 	}
 	return req, func() { _ = os.Remove(tmpPath) }, nil
+}
+
+func streamEventToCodeIndex(ev ingestprogress.StreamEvent) socio.CodeIndexStatus {
+	stage := ev.CurrentStep
+	status := ev.Status
+	switch status {
+	case ingestprogress.StatusQueued:
+		status = string(repoingest.StatusQueued)
+	case ingestprogress.StatusRunning:
+		status = string(repoingest.StatusParsing)
+	case ingestprogress.StatusComplete:
+		status = string(repoingest.StatusReady)
+	case ingestprogress.StatusFailed:
+		status = string(repoingest.StatusFailed)
+	}
+	return socio.CodeIndexStatus{
+		Status:          status,
+		Stage:           stage,
+		ProgressPercent: float64(ev.Progress.Percent),
+		FilesIndexed:    ev.Progress.ProcessedFiles,
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

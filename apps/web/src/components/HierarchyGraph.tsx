@@ -19,6 +19,15 @@ import ReactFlow, {
 
 const elk = new ELK();
 
+export interface FileOverlay {
+  fileId: string;
+  isHotspot: boolean;
+  hasBusFactorRisk: boolean;
+  riskLevel?: string;
+  architectureSignalCount?: number;
+  dominantOwnerLogin?: string;
+}
+
 export interface ClusterLayer {
   prefix: string;
   clusters: Array<{
@@ -33,6 +42,7 @@ export interface ClusterLayer {
   }>;
   files: Array<{ id: string; path: string; symbolCount: number }>;
   edges: Array<{ from: string; to: string; count: number }>;
+  socioOverlay?: { fileOverlays?: Record<string, FileOverlay> };
 }
 
 interface HierarchyGraphProps {
@@ -75,11 +85,24 @@ const ClusterNode = memo(function ClusterNodeInner({ data }: NodeProps) {
 });
 
 const FileNode = memo(function FileNodeInner({ data }: NodeProps) {
+  const hotspot = Boolean(data.isHotspot);
+  const busRisk = Boolean(data.hasBusFactorRisk);
+  const signals = Number(data.architectureSignals ?? 0);
   return (
     <div
-      className={`file-node ${data.highlight ? 'highlight' : ''} ${data.selected ? 'file-node--selected' : ''} ${data.dim ? 'file-node--dim' : ''}`}
+      className={`file-node ${data.highlight ? 'highlight' : ''} ${data.selected ? 'file-node--selected' : ''} ${data.dim ? 'file-node--dim' : ''} ${hotspot ? 'file-node--hotspot' : ''}`}
     >
       <Handle type="target" position={Position.Left} />
+      {hotspot ? <span className="file-node-pulse" aria-hidden /> : null}
+      <div className="file-node-badges">
+        {busRisk ? <span className="file-badge file-badge--bus" title="Bus factor risk">⚠</span> : null}
+        {signals > 0 ? <span className="file-badge file-badge--signal" title="Architecture signals">{signals}</span> : null}
+        {data.dominantOwnerLogin ? (
+          <span className="file-badge file-badge--owner" title="Dominant owner">
+            {String(data.dominantOwnerLogin).slice(0, 2)}
+          </span>
+        ) : null}
+      </div>
       <div className="file-node-title">{String(data.title)}</div>
       <div className="file-node-meta">{String(data.meta)}</div>
       <Handle type="source" position={Position.Right} />
@@ -91,11 +114,20 @@ const nodeTypes = { cluster: ClusterNode, file: FileNode };
 
 function normalizeClusterLayer(raw: ClusterLayer | Record<string, unknown>): ClusterLayer {
   const o = raw as Record<string, unknown>;
+  const overlayRaw = o.socioOverlay as Record<string, unknown> | undefined;
+  let socioOverlay: ClusterLayer['socioOverlay'];
+  if (overlayRaw && typeof overlayRaw === 'object') {
+    const fo = overlayRaw.fileOverlays;
+    if (fo && typeof fo === 'object') {
+      socioOverlay = { fileOverlays: fo as Record<string, FileOverlay> };
+    }
+  }
   return {
     prefix: typeof o.prefix === 'string' ? o.prefix : '',
     clusters: Array.isArray(o.clusters) ? (o.clusters as ClusterLayer['clusters']) : [],
     files: Array.isArray(o.files) ? (o.files as ClusterLayer['files']) : [],
     edges: Array.isArray(o.edges) ? (o.edges as ClusterLayer['edges']) : [],
+    socioOverlay,
   };
 }
 
@@ -126,19 +158,28 @@ async function layoutWithElk(
       },
     });
   }
+  const overlays = layer.socioOverlay?.fileOverlays ?? {};
   for (const f of files) {
     const nid = `f:${f.id}`;
+    const ov = overlays[f.id];
     children.push({ id: nid, width: 200, height: 64 });
+    const metaParts = [`${String(f.symbolCount)} symbols`];
+    if (ov?.dominantOwnerLogin) metaParts.push(`@${ov.dominantOwnerLogin}`);
+    if (ov?.riskLevel) metaParts.push(ov.riskLevel);
     rfNodes.push({
       id: nid,
       type: 'file',
       position: { x: 0, y: 0 },
       data: {
         title: basename(f.path),
-        meta: `${String(f.symbolCount)} symbols`,
+        meta: metaParts.join(' · '),
         path: f.path,
         highlight: highlightedFileIds.has(f.id),
         selected: selectedFileId !== null && selectedFileId === f.id,
+        isHotspot: ov?.isHotspot ?? false,
+        hasBusFactorRisk: ov?.hasBusFactorRisk ?? false,
+        architectureSignals: ov?.architectureSignalCount ?? 0,
+        dominantOwnerLogin: ov?.dominantOwnerLogin ?? '',
       },
     });
   }

@@ -1,5 +1,12 @@
 /** API and domain types shared across web, graph helpers, and contract tests. */
 
+export type {
+  BlastRadiusAffectedFile,
+  BlastRadiusResult,
+  BlastRadiusSummary,
+  BlastRadiusTarget,
+} from './blast';
+
 export type HealthStatus = 'ok' | 'degraded';
 
 export interface HealthResponse {

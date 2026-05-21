@@ -22,13 +22,20 @@ type ChatResponse struct {
 }
 
 type ContextItem struct {
-	FileID         int64
-	Path           string
-	Importance     float64
-	Imports        []string
-	Exports        []string
-	Symbols        []string
-	DependencyOut  int
-	DependencyIn   int
-	SelectionLabel string
+	FileID             int64
+	Path               string
+	Importance         float64
+	Imports            []string
+	Exports            []string
+	Symbols            []string
+	DependencyOut      int
+	DependencyIn       int
+	SelectionLabel     string
+	DominantOwnerLogin string
+	BusFactor          int
+	ChurnScore         float64
+	RiskLevel          string
+	IsHotspot          bool
+	HasBusFactorRisk   bool
+	CommitCount90d     int
 }

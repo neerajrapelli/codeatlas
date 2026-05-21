@@ -19,9 +19,17 @@ func buildPrompt(query string, contextItems []ContextItem, maxChars int) []strin
 	used := len(parts[0]) + len(parts[1])
 
 	for _, item := range contextItems {
+		socio := ""
+		if item.DominantOwnerLogin != "" || item.RiskLevel != "" || item.IsHotspot || item.HasBusFactorRisk {
+			socio = fmt.Sprintf(
+				" owner=%s bus_factor=%d churn_90d=%.0f risk=%s hotspot=%v bus_risk=%v commits_90d=%d",
+				item.DominantOwnerLogin, item.BusFactor, item.ChurnScore, item.RiskLevel,
+				item.IsHotspot, item.HasBusFactorRisk, item.CommitCount90d,
+			)
+		}
 		block := fmt.Sprintf(
-			"- file=%s dep_out=%d dep_in=%d imports=%v exports=%v symbols=%v",
-			item.Path, item.DependencyOut, item.DependencyIn, item.Imports, item.Exports, item.Symbols,
+			"- file=%s dep_out=%d dep_in=%d imports=%v exports=%v symbols=%v%s",
+			item.Path, item.DependencyOut, item.DependencyIn, item.Imports, item.Exports, item.Symbols, socio,
 		)
 		if used+len(block) > maxChars {
 			break

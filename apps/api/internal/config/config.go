@@ -24,6 +24,7 @@ type Config struct {
 	AIContextTokenBudget int
 	ZipMaxBytes          int64
 	ZipMaxFiles          int
+	GitHubToken          string
 }
 
 func Load() Config {
@@ -45,6 +46,7 @@ func Load() Config {
 		AIContextTokenBudget: parseInt(getEnv("AI_CONTEXT_TOKEN_BUDGET", "7000"), 7000),
 		ZipMaxBytes:          parseInt64(getEnv("ZIP_MAX_BYTES", "104857600"), 104857600),
 		ZipMaxFiles:          parseInt(getEnv("ZIP_MAX_FILES", "5000"), 5000),
+		GitHubToken:          os.Getenv("GITHUB_TOKEN"),
 	}
 }
 

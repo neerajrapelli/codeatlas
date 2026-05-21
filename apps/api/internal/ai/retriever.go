@@ -6,16 +6,19 @@ import (
 	"sort"
 	"strings"
 
+	"codeatlas/apps/api/internal/socio"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgvector/pgvector-go"
 )
 
 type Retriever struct {
-	pool *pgxpool.Pool
+	pool  *pgxpool.Pool
+	socio *socio.Store
 }
 
-func NewRetriever(pool *pgxpool.Pool) *Retriever {
-	return &Retriever{pool: pool}
+func NewRetriever(pool *pgxpool.Pool, socioStore *socio.Store) *Retriever {
+	return &Retriever{pool: pool, socio: socioStore}
 }
 
 func (r *Retriever) RetrieveContext(ctx context.Context, repositoryID int64, queryEmbedding []float32, limit int) ([]ContextItem, error) {
@@ -148,7 +151,34 @@ func (r *Retriever) loadContextItems(ctx context.Context, repositoryID int64, fi
 		item.SelectionLabel = "semantic+graph"
 		items = append(items, item)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if r.socio != nil && len(items) > 0 {
+		ids := make([]int64, len(items))
+		for i := range items {
+			ids[i] = items[i].FileID
+		}
+		ctxMap, err := r.socio.SocioContextForFiles(ctx, repositoryID, ids)
+		if err != nil {
+			return items, nil
+		}
+		for i := range items {
+			if sc, ok := ctxMap[items[i].FileID]; ok {
+				items[i].DominantOwnerLogin = sc.DominantOwnerLogin
+				items[i].BusFactor = sc.BusFactor
+				items[i].ChurnScore = sc.ChurnScore
+				items[i].RiskLevel = sc.RiskLevel
+				items[i].IsHotspot = sc.IsHotspot
+				items[i].HasBusFactorRisk = sc.HasBusFactorRisk
+				items[i].CommitCount90d = sc.CommitCount90d
+				if sc.IsHotspot || sc.HasBusFactorRisk {
+					items[i].Importance += 3
+				}
+			}
+		}
+	}
+	return items, nil
 }
 
 func compact(in []string, limit int) []string {

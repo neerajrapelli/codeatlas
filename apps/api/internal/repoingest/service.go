@@ -7,25 +7,45 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"codeatlas/apps/api/internal/indexer"
+	"codeatlas/apps/api/internal/ingestprogress"
+	"codeatlas/apps/api/internal/ingestion"
+	"codeatlas/apps/api/internal/jobqueue"
 )
 
 type Service struct {
 	workspaceRoot string
 	store         *Store
 	indexer       *indexer.Service
+	socioIngest   *ingestion.Service
+	queue         jobqueue.JobQueue
+	broadcaster   *ingestprogress.Broadcaster
 	sources       map[SourceType]Source
 	logger        *slog.Logger
 }
 
-func NewService(workspaceRoot string, store *Store, idx *indexer.Service, logger *slog.Logger, zipMaxBytes int64, zipMaxFiles int) *Service {
+func NewService(
+	workspaceRoot string,
+	store *Store,
+	idx *indexer.Service,
+	socioIngest *ingestion.Service,
+	queue jobqueue.JobQueue,
+	broadcaster *ingestprogress.Broadcaster,
+	logger *slog.Logger,
+	zipMaxBytes int64,
+	zipMaxFiles int,
+) *Service {
 	return &Service{
 		workspaceRoot: workspaceRoot,
 		store:         store,
 		indexer:       idx,
+		socioIngest:   socioIngest,
+		queue:         queue,
+		broadcaster:   broadcaster,
 		logger:        logger,
 		sources: map[SourceType]Source{
 			SourceGitHub:    NewGitSource(SourceGitHub),
@@ -100,21 +120,24 @@ func (s *Service) Ingest(ctx context.Context, req CreateRequest) (Repository, er
 		return repo, err
 	}
 	s.logger.Info("repository_ingestion_ready", "repository_id", repo.ID, "source_type", repo.SourceType, "workspace", workspacePath)
+	s.runSocioEnrichment(repo.ID)
 	return repo, nil
 }
 
-func (s *Service) Enqueue(ctx context.Context, req CreateRequest) (Repository, error) {
-	src, ok := s.sources[req.SourceType]
-	if !ok {
-		return Repository{}, fmt.Errorf("unsupported source type: %s", req.SourceType)
+func (s *Service) Enqueue(ctx context.Context, req CreateRequest) (Repository, string, error) {
+	if _, ok := s.sources[req.SourceType]; !ok {
+		return Repository{}, "", fmt.Errorf("unsupported source type: %s", req.SourceType)
 	}
 	if req.SourceType != SourceZIP && !strings.HasPrefix(req.SourceURL, "http") {
-		return Repository{}, fmt.Errorf("sourceUrl must be an http(s) URL")
+		return Repository{}, "", fmt.Errorf("sourceUrl must be an http(s) URL")
+	}
+	if s.queue == nil {
+		return Repository{}, "", fmt.Errorf("ingestion job queue unavailable")
 	}
 
 	workspacePath, err := s.prepareWorkspacePath(req.SourceType)
 	if err != nil {
-		return Repository{}, err
+		return Repository{}, "", err
 	}
 	repoName := req.DisplayName
 	if repoName == "" {
@@ -130,11 +153,27 @@ func (s *Service) Enqueue(ctx context.Context, req CreateRequest) (Repository, e
 		Status:        StatusQueued,
 	})
 	if err != nil {
-		return Repository{}, err
+		return Repository{}, "", err
 	}
 
-	go s.processInBackground(repo, req, src)
-	return repo, nil
+	meta := map[string]any{
+		"sourceType":  req.SourceType,
+		"sourceUrl":   req.SourceURL,
+		"branch":      req.Branch,
+		"displayName": req.DisplayName,
+	}
+	if req.ZIPPath != "" {
+		meta["zipPath"] = req.ZIPPath
+	}
+	jobID, err := s.queue.Enqueue(ctx, strconv.FormatInt(repo.ID, 10), 1, meta)
+	if err != nil {
+		return Repository{}, "", err
+	}
+	if s.broadcaster != nil {
+		s.broadcaster.Publish(repo.ID, ingestprogress.NewQueuedEvent(repo.ID, 1))
+	}
+	s.logger.Info("repository_ingestion_queued", "repository_id", repo.ID, "job_id", jobID)
+	return repo, jobID, nil
 }
 
 func (s *Service) processInBackground(repo Repository, req CreateRequest, src Source) {
@@ -238,6 +277,20 @@ func (s *Service) processInBackground(repo Repository, req CreateRequest, src So
 		return
 	}
 	s.logger.Info("repository_ingestion_ready", "repository_id", repo.ID, "source_type", repo.SourceType, "workspace", repo.WorkspacePath)
+	s.runSocioEnrichment(repo.ID)
+}
+
+func (s *Service) runSocioEnrichment(repositoryID int64) {
+	if s.socioIngest == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+		defer cancel()
+		if err := s.socioIngest.RunPhase1GitHubHistory(ctx, repositoryID); err != nil {
+			s.logger.Error("socio_ingestion_failed", "repository_id", repositoryID, "error", err)
+		}
+	}()
 }
 
 func maxInt(a, b int) int {
@@ -319,8 +372,58 @@ func (s *Service) Reindex(ctx context.Context, id int64) error {
 		StageMetadata:     map[string]any{},
 	})
 
+	meta := map[string]any{
+		"sourceType":  repo.SourceType,
+		"sourceUrl":   repo.SourceURL,
+		"branch":      repo.Branch,
+		"displayName": repo.Name,
+		"reindex":     true,
+		"skipPrepare": skipPrepare,
+	}
+	if s.queue != nil {
+		jobID, err := s.queue.Enqueue(ctx, strconv.FormatInt(id, 10), 1, meta)
+		if err != nil {
+			return err
+		}
+		if s.broadcaster != nil {
+			s.broadcaster.Publish(id, ingestprogress.NewQueuedEvent(id, 1))
+		}
+		s.logger.Info("repository_reindex_queued", "repository_id", id, "job_id", jobID)
+		return nil
+	}
 	go s.processReindexBackground(repo, req, src, skipPrepare)
 	return nil
+}
+
+// GetIngestionStreamEvent returns the latest SSE payload for a repository.
+func (s *Service) GetIngestionStreamEvent(ctx context.Context, repositoryID int64) (ingestprogress.StreamEvent, error) {
+	if s.broadcaster != nil {
+		if ev, ok := s.broadcaster.Get(repositoryID); ok {
+			return ev, nil
+		}
+	}
+	if s.queue != nil {
+		job, err := s.queue.GetStatus(ctx, strconv.FormatInt(repositoryID, 10))
+		if err != nil {
+			return ingestprogress.StreamEvent{}, err
+		}
+		if job != nil {
+			return job.Progress, nil
+		}
+	}
+	progress, err := s.store.GetProgress(ctx, repositoryID)
+	if err != nil {
+		return ingestprogress.StreamEvent{}, err
+	}
+	return ingestprogress.BuildEvent(
+		1,
+		string(progress.Status),
+		ingestprogress.RepoStatusToCurrentStep(string(progress.Stage)),
+		progress.Metrics.FilesIndexed,
+		progress.Metrics.FilesIndexed,
+		progress.ProgressPercent,
+		nil,
+	), nil
 }
 
 func (s *Service) processReindexBackground(repo Repository, req CreateRequest, src Source, skipPrepare bool) {
@@ -438,6 +541,7 @@ func (s *Service) processReindexBackground(repo Repository, req CreateRequest, s
 		return
 	}
 	s.logger.Info("repository_reindex_ready", "repository_id", repo.ID, "source_type", repo.SourceType, "workspace", repo.WorkspacePath)
+	s.runSocioEnrichment(repo.ID)
 }
 
 func (s *Service) prepareWorkspacePath(sourceType SourceType) (string, error) {

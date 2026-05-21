@@ -1874,6 +1874,192 @@ body {
   background: rgba(255, 255, 255, 0.45);
 }
 
+.socio-panels {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.socio-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border-radius: var(--radius-md);
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.socio-banner__err,
+.socio-banner__hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.socio-enrichment-banner {
+  position: absolute;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.88);
+  color: #f8fafc;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.socio-panel {
+  margin-bottom: 14px;
+}
+
+.socio-panel h3 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.socio-panel--muted {
+  opacity: 0.85;
+}
+
+.socio-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+  margin: 0;
+}
+
+.socio-stats dt {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.socio-stats dd {
+  margin: 2px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.socio-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.hotspot-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.hotspot-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 12px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.hotspot-row__score {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.risk-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  text-transform: capitalize;
+}
+
+.risk-pill--low {
+  background: rgba(34, 197, 94, 0.15);
+  color: #15803d;
+}
+
+.risk-pill--medium {
+  background: rgba(245, 158, 11, 0.2);
+  color: #b45309;
+}
+
+.risk-pill--high,
+.risk-pill--critical {
+  background: rgba(239, 68, 68, 0.15);
+  color: #b91c1c;
+}
+
+.file-node {
+  position: relative;
+}
+
+.file-node--hotspot {
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.35);
+}
+
+.file-node-pulse {
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  border: 2px solid rgba(239, 68, 68, 0.5);
+  animation: hotspot-pulse 1.8s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes hotspot-pulse {
+  0% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.08);
+  }
+}
+
+.file-node-badges {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  gap: 4px;
+}
+
+.file-badge {
+  font-size: 9px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: rgba(15, 23, 42, 0.08);
+  font-weight: 700;
+}
+
+.file-badge--bus {
+  background: rgba(239, 68, 68, 0.2);
+  color: #b91c1c;
+}
+
+.file-badge--signal {
+  background: rgba(37, 99, 235, 0.15);
+  color: var(--accent);
+}
+
+.file-badge--owner {
+  background: rgba(15, 23, 42, 0.12);
+  text-transform: uppercase;
+}
+
 .inspector-head {
   margin-bottom: 12px;
 }
