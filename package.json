@@ -14,14 +14,24 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "turbo run typecheck",
-    "clean": "turbo run clean && rimraf node_modules/.cache"
+    "clean": "turbo run clean && rimraf node_modules/.cache",
+    "arch:dep:json": "node ./scripts/architecture/dependency-report.mjs",
+    "arch:dep:cycles": "madge --circular --extensions ts,tsx,js,jsx,mjs,cjs --warning ./apps/web/src ./packages",
+    "arch:dep:validate": "depcruise --config .dependency-cruiser.cjs --validate . --include-only \"^(apps|packages)\"",
+    "arch:dep:diff": "node ./scripts/architecture/dependency-diff.mjs",
+    "arch:dep:pr-summary": "node ./scripts/architecture/dependency-diff-summary.mjs",
+    "arch:adr:lint": "node ./scripts/architecture/adr-lint.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
+    "dependency-cruiser": "^16.6.0",
     "eslint": "^9.17.0",
     "eslint-config-prettier": "^9.1.0",
+    "graphlib": "^2.1.8",
+    "madge": "^7.0.0",
     "prettier": "^3.4.2",
     "rimraf": "^6.0.1",
+    "tsx": "^4.20.0",
     "turbo": "^2.3.3",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.18.2"

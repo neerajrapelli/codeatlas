@@ -67,3 +67,4 @@ apps/api/workspace/
 # Misc
 *.tsbuildinfo
 tmp-upload.zip
+artifacts/

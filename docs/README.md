@@ -17,6 +17,7 @@ The graph is the **source of truth**—features are graph enrichment, not discon
 | Design decisions | [architecture/decisions.md](./architecture/decisions.md) |
 | Sequence diagrams | [architecture/sequence-diagrams.md](./architecture/sequence-diagrams.md) |
 | Performance & scaling | [architecture/performance-and-scaling.md](./architecture/performance-and-scaling.md) |
+| Runtime tracing | [architecture/runtime-tracing.md](./architecture/runtime-tracing.md) |
 | Backend (Go API) | [backend/overview.md](./backend/overview.md) |
 | Indexing pipeline | [backend/indexer.md](./backend/indexer.md) |
 | Socio-technical ingestion | [backend/ingestion-socio.md](./backend/ingestion-socio.md) |
@@ -30,6 +31,8 @@ The graph is the **source of truth**—features are graph enrichment, not discon
 | Production assumptions | [deployment/production.md](./deployment/production.md) |
 | Security | [security/overview.md](./security/overview.md) |
 | Testing | [testing/strategy.md](./testing/strategy.md) |
+| Architecture dependency checks | [architecture/dependency-analysis.md](./architecture/dependency-analysis.md) |
+| ADR index | [adr/README.md](./adr/README.md) |
 | Logging & monitoring | [operations/logging-monitoring.md](./operations/logging-monitoring.md) |
 | Prometheus metrics | [operations/observability.md](./operations/observability.md) |
 | Troubleshooting | [operations/troubleshooting.md](./operations/troubleshooting.md) |
@@ -62,4 +65,4 @@ The graph is the **source of truth**—features are graph enrichment, not discon
 
 - **Implemented:** Code indexing, graph UI, Graph RAG chat (SSE), repo ingest (Git + ZIP), Phase 1 socio-technical sync (GitHub + `GITHUB_TOKEN`).
 - **Schema only / partial:** Phase 2 engineering memory tables, Phase 3 CI tables—migrations exist; ingestion not fully wired.
-- **Not in repo:** User authentication, CI/CD workflows, production Docker/K8s manifests.
+- **Not in repo:** User authentication, production Docker/K8s manifests.
