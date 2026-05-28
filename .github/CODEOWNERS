@@ -1,0 +1,17 @@
+# Global fallback
+* @neera
+
+# API and migrations
+/apps/api/ @neera
+/apps/api/migrations/ @neera
+
+# Frontend
+/apps/web/ @neera
+
+# Shared package surfaces
+/packages/ @neera
+
+# Architecture governance docs
+/docs/architecture/ @neera
+/docs/adr/ @neera
+/scripts/architecture/ @neera
