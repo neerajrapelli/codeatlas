@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"codeatlas/apps/api/internal/ai"
+	"codeatlas/apps/api/internal/archintel"
 	"codeatlas/apps/api/internal/blastradius"
 	"codeatlas/apps/api/internal/driftdetector"
 	"codeatlas/apps/api/internal/livingdocs"
@@ -108,6 +109,7 @@ func main() {
 	ghClient := github.NewClient(cfg.GitHubToken, logger)
 	socioIngest := ingestion.NewService(socioStore, ghClient, logger)
 	socioQuery := socio.NewQueryService(socioStore)
+	archQuery := archintel.NewQueryService(pool)
 
 	progressBus := ingestprogress.NewEventBus(cfg.RedisURL, logger)
 	ingestQueue := jobqueue.NewPostgresQueue(pool)
@@ -155,7 +157,7 @@ func main() {
 	mcpServer := mcp.NewServer(pool, blastSvc, driftEngine, socioQuery)
 	onboardingSvc := onboarding.NewService(aiService)
 	livingDocsSvc := livingdocs.NewService(pool)
-	srv := httpserver.New(cfg, pool, aiService, ingestService, ingestQueue, socioQuery, blastSvc, driftEngine, driftStore, mcpServer, teamsSvc, onboardingSvc, livingDocsSvc, progressBus, vcsSvc)
+	srv := httpserver.New(cfg, pool, aiService, ingestService, ingestQueue, socioQuery, blastSvc, driftEngine, driftStore, mcpServer, teamsSvc, onboardingSvc, livingDocsSvc, progressBus, vcsSvc, archQuery)
 
 	go func() {
 		slog.Info("http_listening", "addr", cfg.HTTPAddr)

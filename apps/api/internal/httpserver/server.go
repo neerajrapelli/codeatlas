@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"codeatlas/apps/api/internal/archintel"
 	"codeatlas/apps/api/internal/ai"
 	"codeatlas/apps/api/internal/auth"
 	"codeatlas/apps/api/internal/blastradius"
@@ -55,6 +56,7 @@ func New(
 	livingDocs *livingdocs.Service,
 	progressBus ingestprogress.EventBus,
 	vcsSvc *vcsauth.Service,
+	archQuery *archintel.QueryService,
 ) *http.Server {
 	api := &API{
 		cfg:         cfg,
@@ -72,6 +74,7 @@ func New(
 		onboarding:  onboardingSvc,
 		livingDocs:  livingDocs,
 		vcs:         vcsSvc,
+		archQuery:   archQuery,
 	}
 
 	mux := http.NewServeMux()
@@ -84,6 +87,7 @@ func New(
 	api.registerIngestRoutes(mux)
 	api.registerVCSRoutes(mux)
 	api.registerAIRoutes(mux)
+	api.registerArchitectureRoutes(mux)
 
 	mux.Handle("GET /metrics", metricsHandler())
 

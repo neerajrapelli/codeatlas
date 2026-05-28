@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"codeatlas/apps/api/internal/archintel"
 	"codeatlas/apps/api/internal/ai"
 	"codeatlas/apps/api/internal/blastradius"
 	"codeatlas/apps/api/internal/config"
@@ -41,4 +42,5 @@ type API struct {
 	onboarding   *onboarding.Service
 	livingDocs   *livingdocs.Service
 	vcs          *vcsauth.Service
+	archQuery    *archintel.QueryService
 }

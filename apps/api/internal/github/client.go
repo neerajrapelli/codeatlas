@@ -108,6 +108,23 @@ type IssueCommentItem struct {
 	User      *User
 }
 
+type PRReviewItem struct {
+	ID        int64
+	Body      string
+	State     string
+	CreatedAt time.Time
+	User      *User
+}
+
+type DiscussionItem struct {
+	Number    int
+	Title     string
+	Body      string
+	State     string
+	CreatedAt time.Time
+	User      *User
+}
+
 // ListCommits pages through commit history (newest first).
 func (c *Client) ListCommits(ctx context.Context, owner, repo string, since time.Time, maxPages int) ([]CommitListItem, error) {
 	var all []CommitListItem
@@ -382,6 +399,91 @@ func (c *Client) ListIssueComments(ctx context.Context, owner, repo string, issu
 		out = append(out, item)
 	}
 	return out, nil
+}
+
+// ListPRReviews returns review events for a pull request.
+func (c *Client) ListPRReviews(ctx context.Context, owner, repo string, prNumber int) ([]PRReviewItem, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/reviews?per_page=100", apiBase, owner, repo, prNumber)
+	body, err := c.get(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	var raw []struct {
+		ID        int64  `json:"id"`
+		Body      string `json:"body"`
+		State     string `json:"state"`
+		SubmittedAt string `json:"submitted_at"`
+		User      *struct {
+			ID    int64  `json:"id"`
+			Login string `json:"login"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("decode pr reviews: %w", err)
+	}
+	out := make([]PRReviewItem, 0, len(raw))
+	for _, rev := range raw {
+		created, _ := time.Parse(time.RFC3339, rev.SubmittedAt)
+		item := PRReviewItem{ID: rev.ID, Body: rev.Body, State: rev.State, CreatedAt: created}
+		if rev.User != nil {
+			item.User = &User{ID: rev.User.ID, Login: rev.User.Login}
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+// ListDiscussions returns GitHub Discussions for a repository.
+func (c *Client) ListDiscussions(ctx context.Context, owner, repo string, maxPages int) ([]DiscussionItem, error) {
+	var all []DiscussionItem
+	page := 1
+	perPage := 100
+	for page <= maxPages {
+		url := fmt.Sprintf("%s/repos/%s/%s/discussions?per_page=%d&page=%d", apiBase, owner, repo, perPage, page)
+		body, err := c.get(ctx, url)
+		if err != nil {
+			if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "410") {
+				return all, nil
+			}
+			return nil, err
+		}
+		var pageItems []struct {
+			Number    int    `json:"number"`
+			Title     string `json:"title"`
+			Body      string `json:"body"`
+			State     string `json:"state"`
+			CreatedAt string `json:"created_at"`
+			User      *struct {
+				ID    int64  `json:"id"`
+				Login string `json:"login"`
+			} `json:"user"`
+		}
+		if err := json.Unmarshal(body, &pageItems); err != nil {
+			return nil, fmt.Errorf("decode discussions: %w", err)
+		}
+		if len(pageItems) == 0 {
+			break
+		}
+		for _, d := range pageItems {
+			created, _ := time.Parse(time.RFC3339, d.CreatedAt)
+			item := DiscussionItem{
+				Number:    d.Number,
+				Title:     d.Title,
+				Body:      d.Body,
+				State:     d.State,
+				CreatedAt: created,
+			}
+			if d.User != nil {
+				item.User = &User{ID: d.User.ID, Login: d.User.Login}
+			}
+			all = append(all, item)
+		}
+		if len(pageItems) < perPage {
+			break
+		}
+		page++
+	}
+	return all, nil
 }
 
 func (c *Client) get(ctx context.Context, url string) ([]byte, error) {

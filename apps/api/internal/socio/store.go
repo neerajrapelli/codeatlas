@@ -201,6 +201,27 @@ func (s *Store) LatestIngestionRun(ctx context.Context, repositoryID int64) (uui
 	return id, phase, status, pct, completed, errDetails, err
 }
 
+func (s *Store) LatestPhaseCompletedAt(ctx context.Context, repositoryID int64, phase string) (*time.Time, error) {
+	var ts *time.Time
+	err := s.pool.QueryRow(ctx, `
+		SELECT completed_at
+		FROM socio_ingestion_runs
+		WHERE repository_id=$1
+		  AND phase=$2
+		  AND status IN ('completed','partial')
+		  AND completed_at IS NOT NULL
+		ORDER BY completed_at DESC
+		LIMIT 1
+	`, repositoryID, phase).Scan(&ts)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return ts, nil
+}
+
 func (s *Store) ListRunSteps(ctx context.Context, runID uuid.UUID) ([]IngestionStepStatus, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT step, status, duration_ms, items_processed, failure_metadata
@@ -528,6 +549,53 @@ func (s *Store) UpsertPRComment(ctx context.Context, prID uuid.UUID, authorID *u
 		ON CONFLICT (pull_request_id, external_id) DO UPDATE SET
 		  body_preview=EXCLUDED.body_preview
 	`, prID, authorID, body, created, externalID)
+	return err
+}
+
+func (s *Store) UpsertPRReview(ctx context.Context, prID uuid.UUID, reviewerID *uuid.UUID, state string, submittedAt time.Time) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO pr_reviews(pull_request_id, reviewer_contributor_id, state, submitted_at)
+		VALUES ($1,$2,$3,$4)
+		ON CONFLICT (pull_request_id, reviewer_contributor_id, submitted_at) DO UPDATE SET
+		  state=EXCLUDED.state
+	`, prID, reviewerID, state, submittedAt)
+	return err
+}
+
+func (s *Store) UpsertDiscussionDocument(
+	ctx context.Context,
+	repositoryID int64,
+	sourceKind, sourceID, title, authorLogin, body string,
+	moduleHints, participantHints []string,
+	occurredAt *time.Time,
+	meta map[string]any,
+) error {
+	raw, _ := json.Marshal(meta)
+	modRaw, _ := json.Marshal(moduleHints)
+	partRaw, _ := json.Marshal(participantHints)
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO discussion_documents(
+		  repository_id, tenant_id, source_kind, source_id, title, author_login, body,
+		  module_hints, participant_hints, occurred_at, metadata, updated_at,
+		  search_document
+		)
+		VALUES(
+		  $1,
+		  COALESCE((SELECT tenant_id FROM repositories WHERE id=$1),'default'),
+		  $2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10::jsonb,NOW(),
+		  to_tsvector('english', COALESCE($4,'') || ' ' || COALESCE($6,''))
+		)
+		ON CONFLICT (repository_id, tenant_id, source_kind, source_id) DO UPDATE SET
+		  title=EXCLUDED.title,
+		  author_login=EXCLUDED.author_login,
+		  body=EXCLUDED.body,
+		  module_hints=EXCLUDED.module_hints,
+		  participant_hints=EXCLUDED.participant_hints,
+		  occurred_at=EXCLUDED.occurred_at,
+		  metadata=EXCLUDED.metadata,
+		  updated_at=NOW(),
+		  search_document=EXCLUDED.search_document
+	`, repositoryID, sourceKind, sourceID, title, authorLogin, body, string(modRaw), string(partRaw), occurredAt, string(raw))
 	return err
 }
 

@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
+	"codeatlas/apps/api/internal/archintel"
 	"codeatlas/apps/api/internal/github"
 	"codeatlas/apps/api/internal/signals"
 	"codeatlas/apps/api/internal/socio"
@@ -39,6 +41,11 @@ func (s *Service) RunPhase2EngineeringMemory(ctx context.Context, repositoryID i
 	runID, err := s.store.StartIngestionRun(ctx, repositoryID, socio.PhaseEngineering)
 	if err != nil {
 		return err
+	}
+	since, _ := s.store.LatestPhaseCompletedAt(ctx, repositoryID, socio.PhaseEngineering)
+	if since == nil {
+		fallback := time.Now().AddDate(0, -3, 0)
+		since = &fallback
 	}
 
 	pathIndex, err := s.store.FilePathIndex(ctx, repositoryID)
@@ -88,12 +95,15 @@ func (s *Service) RunPhase2EngineeringMemory(ctx context.Context, repositoryID i
 	var sources []textSource
 
 	if err := step(socio.StepSyncIssues, func(ctx context.Context) (int, error) {
-		issues, err := s.github.ListIssues(ctx, owner, name, 2)
+		issues, err := s.github.ListIssues(ctx, owner, name, 4)
 		if err != nil {
 			return 0, err
 		}
 		n := 0
 		for _, iss := range issues {
+			if since != nil && !iss.CreatedAt.IsZero() && iss.CreatedAt.Before(*since) {
+				continue
+			}
 			var authorID *uuid.UUID
 			if iss.User != nil {
 				authorID, _ = ensureContributor(ctx, iss.User)
@@ -138,6 +148,9 @@ func (s *Service) RunPhase2EngineeringMemory(ctx context.Context, repositoryID i
 				continue
 			}
 			for _, cmt := range comments {
+				if since != nil && !cmt.CreatedAt.IsZero() && cmt.CreatedAt.Before(*since) {
+					continue
+				}
 				var authorID *uuid.UUID
 				if cmt.User != nil {
 					authorID, _ = ensureContributor(ctx, cmt.User)
@@ -155,7 +168,95 @@ func (s *Service) RunPhase2EngineeringMemory(ctx context.Context, repositoryID i
 	}); err != nil {
 		return err
 	}
-	_ = s.store.UpdateRunProgress(ctx, runID, 70, socio.StatusRunning, "")
+	_ = s.store.UpdateRunProgress(ctx, runID, 60, socio.StatusRunning, "")
+
+	if err := step(socio.StepSyncPRReviews, func(ctx context.Context) (int, error) {
+		prs, err := s.store.ListPullRequestRefs(ctx, repositoryID, 40)
+		if err != nil {
+			return 0, err
+		}
+		n := 0
+		for _, pr := range prs {
+			reviews, err := s.github.ListPRReviews(ctx, owner, name, pr.Number)
+			if err != nil {
+				continue
+			}
+			for _, rev := range reviews {
+				if since != nil && !rev.CreatedAt.IsZero() && rev.CreatedAt.Before(*since) {
+					continue
+				}
+				var reviewerID *uuid.UUID
+				if rev.User != nil {
+					reviewerID, _ = ensureContributor(ctx, rev.User)
+				}
+				_ = s.store.UpsertPRReview(ctx, pr.ID, reviewerID, rev.State, rev.CreatedAt)
+				sources = append(sources, textSource{
+					text: rev.Body, sourceKind: "pr_review", sourceID: &pr.ID,
+					label: fmt.Sprintf("PR #%d review", pr.Number),
+				})
+				n++
+			}
+		}
+		return n, nil
+	}); err != nil {
+		return err
+	}
+	_ = s.store.UpdateRunProgress(ctx, runID, 75, socio.StatusRunning, "")
+
+	if err := step(socio.StepSyncDiscussions, func(ctx context.Context) (int, error) {
+		discussions, err := s.github.ListDiscussions(ctx, owner, name, 4)
+		if err != nil {
+			return 0, err
+		}
+		n := 0
+		for _, d := range discussions {
+			if since != nil && !d.CreatedAt.IsZero() && d.CreatedAt.Before(*since) {
+				continue
+			}
+			body := strings.TrimSpace(d.Body)
+			title := strings.TrimSpace(d.Title)
+			if title == "" && body == "" {
+				continue
+			}
+			author := ""
+			if d.User != nil {
+				author = d.User.Login
+			}
+			moduleHints := make([]string, 0, 4)
+			for _, draft := range signals.ExtractFromText(title + "\n" + body) {
+				for _, p := range draft.FilePaths {
+					moduleHints = append(moduleHints, p)
+				}
+			}
+			sourceID := fmt.Sprintf("%d", d.Number)
+			_ = s.store.UpsertDiscussionDocument(
+				ctx,
+				repositoryID,
+				"github_discussion",
+				sourceID,
+				title,
+				author,
+				body,
+				moduleHints,
+				[]string{author},
+				&d.CreatedAt,
+				map[string]any{"state": d.State},
+			)
+			sources = append(sources, textSource{
+				text: title + "\n" + body, sourceKind: "discussion", sourceID: nil,
+				label: fmt.Sprintf("Discussion #%d", d.Number),
+			})
+			n++
+		}
+		return n, nil
+	}); err != nil {
+		return err
+	}
+	s.logger.Info("socio_phase2_discussions_synced", "repository_id", repositoryID, "since", since)
+	_ = s.store.UpdateRunProgress(ctx, runID, 85, socio.StatusRunning, "")
+
+	decisionStore := archintel.NewStore(s.store.Pool())
+	discussionAnalyzer := archintel.NewAnalyzer(false)
 
 	if err := step(socio.StepExtractSignals, func(ctx context.Context) (int, error) {
 		if err := s.store.ClearArchitectureSignals(ctx, repositoryID); err != nil {
@@ -191,11 +292,39 @@ func (s *Service) RunPhase2EngineeringMemory(ctx context.Context, repositoryID i
 					inserted++
 				}
 			}
+			decisions := discussionAnalyzer.AnalyzeDiscussion(archintel.DiscussionInput{
+				SourceKind: src.sourceKind,
+				Title:      src.label,
+				Body:       src.text,
+			})
+			for _, dec := range decisions {
+				decID, err := decisionStore.UpsertDecision(ctx, repositoryID, dec, src.sourceKind, src.label)
+				if err != nil {
+					continue
+				}
+				eventType := "proposed"
+				if dec.Status == archintel.DecisionAccepted {
+					eventType = "accepted"
+				} else if dec.Status == archintel.DecisionRejected {
+					eventType = "rejected"
+				}
+				_ = decisionStore.InsertDecisionEvent(
+					ctx,
+					repositoryID,
+					decID,
+					eventType,
+					dec.Summary,
+					"",
+					time.Now().UTC(),
+					map[string]any{"sourceKind": src.sourceKind, "sourceLabel": src.label},
+				)
+			}
 		}
 		return inserted, nil
 	}); err != nil {
 		return err
 	}
+	s.logger.Info("socio_phase2_signals_extracted", "repository_id", repositoryID, "source_count", len(sources))
 
 	status := socio.StatusCompleted
 	if len(sources) == 0 {

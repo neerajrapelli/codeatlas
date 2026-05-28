@@ -45,6 +45,8 @@ const (
 const (
 	StepSyncIssues        = "sync_issues"
 	StepSyncPRDiscussions = "sync_pr_discussions"
+	StepSyncPRReviews     = "sync_pr_reviews"
+	StepSyncDiscussions   = "sync_discussions"
 	StepExtractSignals    = "extract_architecture_signals"
 )
 
