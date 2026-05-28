@@ -1,16 +1,22 @@
 import type {
+  ArchitectureSearchHit,
   ArchitectureRule,
   BlastRadiusResult,
   BoundaryViolationRow,
   ClusterLayer,
+  DecisionRecord,
   GraphFileDetail,
   HotspotEntry,
   IngestionStatusPayload,
+  MaintainerInfluence,
+  ModuleIntelligence,
   OnboardingPlan,
   OwnershipSummary,
+  PRInsight,
   Repository,
   RuleViolation,
   TeamRow,
+  TimelineEntry,
 } from '../types';
 import { getApiBase } from '../apiBase';
 import { apiFetch, apiJson, apiPostJson } from './apiFetch';
@@ -348,6 +354,55 @@ export const api = {
     } catch {
       return [];
     }
+  },
+
+  getArchitectureTimeline: async (repositoryId: number): Promise<TimelineEntry[]> => {
+    const json = await apiJson<{ items?: TimelineEntry[] }>(
+      `/repositories/${String(repositoryId)}/architecture/timeline`,
+    );
+    return Array.isArray(json.items) ? json.items : [];
+  },
+
+  getArchitectureDecisions: async (repositoryId: number): Promise<DecisionRecord[]> => {
+    const json = await apiJson<{ items?: DecisionRecord[] }>(
+      `/repositories/${String(repositoryId)}/architecture/decisions`,
+    );
+    return Array.isArray(json.items) ? json.items : [];
+  },
+
+  getModuleIntelligence: async (
+    repositoryId: number,
+    modulePath: string,
+  ): Promise<ModuleIntelligence> => {
+    const q = new URLSearchParams({ path: modulePath });
+    return apiJson<ModuleIntelligence>(
+      `/repositories/${String(repositoryId)}/architecture/module-intel?${q.toString()}`,
+    );
+  },
+
+  getPRInsights: async (repositoryId: number): Promise<PRInsight[]> => {
+    const json = await apiJson<{ items?: PRInsight[] }>(
+      `/repositories/${String(repositoryId)}/architecture/pr-insights`,
+    );
+    return Array.isArray(json.items) ? json.items : [];
+  },
+
+  getMaintainerInfluence: async (repositoryId: number): Promise<MaintainerInfluence[]> => {
+    const json = await apiJson<{ items?: MaintainerInfluence[] }>(
+      `/repositories/${String(repositoryId)}/architecture/maintainer-influence`,
+    );
+    return Array.isArray(json.items) ? json.items : [];
+  },
+
+  searchArchitecture: async (
+    repositoryId: number,
+    query: string,
+  ): Promise<ArchitectureSearchHit[]> => {
+    const q = new URLSearchParams({ q: query });
+    const json = await apiJson<{ items?: ArchitectureSearchHit[] }>(
+      `/repositories/${String(repositoryId)}/architecture/search?${q.toString()}`,
+    );
+    return Array.isArray(json.items) ? json.items : [];
   },
 
   exportDocs: async (repositoryId: number) => {

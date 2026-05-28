@@ -39,8 +39,103 @@ export type SidebarView =
   | 'docs'
   | 'onboarding'
   | 'drift'
+  | 'timeline'
+  | 'decisions'
+  | 'module_intel'
+  | 'pr_insights'
+  | 'maintainer_influence'
   | 'mcp'
   | 'settings';
+
+export type DecisionStatus = 'proposed' | 'accepted' | 'rejected' | 'deprecated';
+
+export type EvidenceKind =
+  | 'pr_comment'
+  | 'pr_review'
+  | 'issue'
+  | 'discussion'
+  | 'rfc'
+  | 'adr'
+  | 'design_doc';
+
+export interface DecisionRecord {
+  id: string;
+  repositoryId: number;
+  title: string;
+  summary: string;
+  status: DecisionStatus;
+  tradeoffs: string[];
+  affectedModules: string[];
+  affectedFiles: string[];
+  participants: string[];
+  confidence: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TimelineEntry {
+  id: string;
+  occurredAt: string;
+  kind: string;
+  title: string;
+  summary: string;
+  decisionId?: string;
+  relatedModules: string[];
+  relatedFiles: string[];
+  participants: string[];
+  evidenceKind: EvidenceKind;
+  evidenceRef?: string;
+}
+
+export interface PRInsight {
+  pullRequestId: number;
+  number: number;
+  title: string;
+  author: string;
+  summary: string;
+  decisionIds: string[];
+  keyTradeoffs: string[];
+  affectedModules: string[];
+  participants: string[];
+  reviewDisagreementCount: number;
+  updatedAt: string;
+}
+
+export interface MaintainerInfluence {
+  login: string;
+  displayName?: string;
+  decisionsShaped: number;
+  acceptedProposals: number;
+  rejectedProposals: number;
+  modulesTouched: string[];
+  lastActiveAt?: string;
+}
+
+export interface ModuleIntelligence {
+  modulePath: string;
+  decisionCount: number;
+  decisions: DecisionRecord[];
+  recentTimeline: TimelineEntry[];
+  topMaintainers: MaintainerInfluence[];
+  relatedPRs: PRInsight[];
+}
+
+export interface ArchitectureSearchHit {
+  id: string;
+  kind: string;
+  title: string;
+  summary: string;
+  score: number;
+  keywordScore: number;
+  vectorScore: number;
+  recencyBoost: number;
+  moduleBoost: number;
+  maintainerBoost: number;
+  matchedModules: string[];
+  participants: string[];
+  evidenceKind: EvidenceKind;
+  occurredAt?: string;
+}
 
 export interface TeamRow {
   id: string;

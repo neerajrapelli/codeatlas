@@ -44,6 +44,11 @@ const VIEW_COMMANDS: Array<{ view: SidebarView; label: string; icon: string }> =
   { view: 'docs', label: 'Living docs', icon: 'codicon-book' },
   { view: 'onboarding', label: 'Onboarding', icon: 'codicon-mortar-board' },
   { view: 'drift', label: 'Architecture drift', icon: 'codicon-shield' },
+  { view: 'timeline', label: 'Architecture timeline', icon: 'codicon-history' },
+  { view: 'decisions', label: 'Decision explorer', icon: 'codicon-git-pull-request-closed' },
+  { view: 'module_intel', label: 'Module intelligence', icon: 'codicon-symbol-module' },
+  { view: 'pr_insights', label: 'PR insights', icon: 'codicon-git-pull-request' },
+  { view: 'maintainer_influence', label: 'Maintainer influence', icon: 'codicon-account' },
   { view: 'mcp', label: 'MCP', icon: 'codicon-plug' },
   { view: 'settings', label: 'Settings', icon: 'codicon-settings-gear' },
 ];

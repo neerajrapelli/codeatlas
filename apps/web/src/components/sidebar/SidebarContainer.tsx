@@ -1,8 +1,13 @@
 import { useStore } from '../../store';
 import { OnboardingPanel } from './OnboardingPanel';
+import { ArchitectureTimelineView } from './ArchitectureTimelineView';
+import { DecisionExplorerView } from './DecisionExplorerView';
 import { DocsView } from './DocsView';
 import { DriftView } from './DriftView';
+import { MaintainerInfluenceView } from './MaintainerInfluenceView';
 import { McpView } from './McpView';
+import { ModuleIntelligenceView } from './ModuleIntelligenceView';
+import { PRInsightView } from './PRInsightView';
 import { SettingsView } from './SettingsView';
 import { TeamsView } from './TeamsView';
 import { HotspotsView } from './HotspotsView';
@@ -37,6 +42,11 @@ export function SidebarContainer() {
       {sidebarView === 'docs' ? <DocsView /> : null}
       {sidebarView === 'onboarding' ? <OnboardingPanel /> : null}
       {sidebarView === 'drift' ? <DriftView /> : null}
+      {sidebarView === 'timeline' ? <ArchitectureTimelineView /> : null}
+      {sidebarView === 'decisions' ? <DecisionExplorerView /> : null}
+      {sidebarView === 'module_intel' ? <ModuleIntelligenceView /> : null}
+      {sidebarView === 'pr_insights' ? <PRInsightView /> : null}
+      {sidebarView === 'maintainer_influence' ? <MaintainerInfluenceView /> : null}
       {sidebarView === 'settings' ? <SettingsView /> : null}
       {sidebarView === 'mcp' ? <McpView /> : null}
     </aside>

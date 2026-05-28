@@ -11,6 +11,11 @@ const ITEMS: Array<{ view: SidebarView; icon: string; title: string }> = [
   { view: 'docs', icon: 'codicon-book', title: 'Living docs' },
   { view: 'onboarding', icon: 'codicon-mortar-board', title: 'Onboarding' },
   { view: 'drift', icon: 'codicon-shield', title: 'Architecture drift' },
+  { view: 'timeline', icon: 'codicon-history', title: 'Architecture timeline' },
+  { view: 'decisions', icon: 'codicon-git-pull-request-closed', title: 'Decision explorer' },
+  { view: 'module_intel', icon: 'codicon-symbol-module', title: 'Module intelligence' },
+  { view: 'pr_insights', icon: 'codicon-git-pull-request', title: 'PR insights' },
+  { view: 'maintainer_influence', icon: 'codicon-account', title: 'Maintainer influence' },
   { view: 'mcp', icon: 'codicon-plug', title: 'MCP' },
 ];
 
