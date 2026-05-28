@@ -58,6 +58,55 @@ jobs:
         working-directory: apps/web
       - run: pnpm --filter @codeatlas/web test:e2e
 
+  architecture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - name: Build dependency graph artifacts
+        run: pnpm arch:dep:json
+      - name: Lint ADR format
+        run: pnpm arch:adr:lint
+      - name: Check dependency cycles
+        run: pnpm arch:dep:cycles
+      - name: Validate architecture boundaries
+        run: pnpm arch:dep:validate
+      - name: Build base branch dependency graph
+        if: github.event_name == 'pull_request'
+        run: |
+          git worktree add ../codeatlas-base origin/${{ github.base_ref }}
+          cd ../codeatlas-base
+          pnpm install --frozen-lockfile
+          pnpm arch:dep:json
+          cp artifacts/module-graph.json ../codeatlas/artifacts/base-module-graph.json
+      - name: Compute architecture diff
+        if: github.event_name == 'pull_request'
+        run: |
+          pnpm arch:dep:diff artifacts/base-module-graph.json artifacts/module-graph.json artifacts/module-graph-diff.json
+          pnpm arch:dep:pr-summary
+      - name: Cleanup base worktree
+        if: always() && github.event_name == 'pull_request'
+        run: git worktree remove ../codeatlas-base --force || true
+      - name: Append architecture summary to job summary
+        if: github.event_name == 'pull_request'
+        run: cat artifacts/architecture-pr-summary.md >> $GITHUB_STEP_SUMMARY
+      - name: Upload architecture artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: architecture-${{ github.sha }}
+          path: artifacts/
+          if-no-files-found: warn
+
   validation-platform:
     runs-on: ubuntu-latest
     steps:
