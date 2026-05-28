@@ -31,6 +31,15 @@ services:
       timeout: 3s
       retries: 5
 
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+
   migrate:
     build:
       context: ./apps/api
@@ -66,13 +75,15 @@ services:
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-codeatlas-api}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      jaeger:
+        condition: service_started
       migrate:
         condition: service_completed_successfully
     ports:
